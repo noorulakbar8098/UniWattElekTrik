@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Pre-API-31 splash: sets the window background to brand blue so there is no
+        white flash during cold-start before Compose renders.
+        postSplashScreenTheme (API 31+) is handled in values-v31/themes.xml.
+    -->
+    <style name="Theme.UniWatt.Splash" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/splash_bg</item>
+        <item name="android:statusBarColor">@color/splash_bg</item>
+        <item name="android:navigationBarColor">@color/splash_bg</item>
+    </style>
+</resources>

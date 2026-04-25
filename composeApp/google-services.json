@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "245973616037",
+    "project_id": "uniwattelectric",
+    "storage_bucket": "uniwattelectric.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:245973616037:android:fc909e1e570c2dc8b5144c",
+        "android_client_info": {
+          "package_name": "com.example.uniwattelektrik"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC9L2xMws5_dDNOSwb4k0DaCoGpfBhw0Dg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
