@@ -11,6 +11,9 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -24,6 +27,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.uniwattelektrik.di.AppContainer
 import com.example.uniwattelektrik.feature.auth.presentation.components.*
 import com.example.uniwattelektrik.feature.auth.presentation.state.AuthUiEvent
 import com.example.uniwattelektrik.feature.auth.presentation.state.AuthUiState
@@ -44,6 +48,9 @@ fun LoginScreen(
     val isLoading    = state is AuthUiState.Loading
     val errorMessage = (state as? AuthUiState.Error)?.message
     val canSubmit    = !isLoading && email.isNotBlank() && password.length >= 6
+
+    var showCreatePwd by remember { mutableStateOf(false) }
+    val resetVm = remember { AppContainer.createPasswordResetViewModel() }
 
     AuthBackground {
         // ── Brand header + toggle + form card (centred vertically) ────────
@@ -141,6 +148,7 @@ fun LoginScreen(
                     checked         = keepSignedIn,
                     onCheckedChange = { viewModel.onEvent(AuthUiEvent.ToggleKeepSignedIn) },
                     enabled         = !isLoading,
+                    onCreateNewPassword = { showCreatePwd = true },
                 )
 
                 if (errorMessage != null) {
@@ -168,33 +176,59 @@ fun LoginScreen(
                 .padding(bottom = 24.dp),
         )
     }
+
+    if (showCreatePwd) {
+        CreateNewPasswordSheet(
+            viewModel = resetVm,
+            onDismiss = { showCreatePwd = false },
+        )
+    }
 }
 
-/** Reusable "Keep me signed in" + "Forgot password?" row. */
+/** Reusable "Keep me signed in" + "Create New Password" + "Forgot password?" row. */
 @Composable
 internal fun KeepMeRow(
     checked: Boolean,
     onCheckedChange: () -> Unit,
     enabled: Boolean,
+    onCreateNewPassword: () -> Unit = {},
     onForgotPassword: () -> Unit = {},
 ) {
-    Row(
-        modifier          = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        KeepMeSignedInCheckbox(
-            checked         = checked,
-            onCheckedChange = { onCheckedChange() },
-            enabled         = enabled,
-        )
-        Spacer(Modifier.weight(1f))
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier          = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            KeepMeSignedInCheckbox(
+                checked         = checked,
+                onCheckedChange = { onCheckedChange() },
+                enabled         = enabled,
+            )
+            Spacer(Modifier.weight(1f))
+            TextButton(
+                onClick        = onForgotPassword,
+                enabled        = enabled,
+                contentPadding = PaddingValues(horizontal = 4.dp),
+            ) {
+                Text(
+                    "Forgot password?",
+                    color      = AuthColors.PrimaryBlue,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        // First-time setup: lets a freshly-onboarded employee turn the temp
+        // password their admin shared into a password of their own.
+        // Succeeds exactly once per account; afterwards "Forgot password" is
+        // the path forward.
         TextButton(
-            onClick        = onForgotPassword,
-            enabled        = enabled,
+            onClick = onCreateNewPassword,
+            enabled = enabled,
+            modifier = Modifier.align(Alignment.End),
             contentPadding = PaddingValues(horizontal = 4.dp),
         ) {
             Text(
-                "Forgot password?",
+                "Create New Password (first-time setup)",
                 color      = AuthColors.PrimaryBlue,
                 fontWeight = FontWeight.SemiBold,
             )

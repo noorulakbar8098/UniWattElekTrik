@@ -10,11 +10,15 @@ import com.example.uniwattelektrik.feature.auth.domain.repository.AuthRepository
  */
 class SignInUseCase(private val repository: AuthRepository) {
 
-    suspend operator fun invoke(email: String, password: String): Resource<AuthSession> {
+    suspend operator fun invoke(
+        email: String,
+        password: String,
+        asAdmin: Boolean = false,
+    ): Resource<AuthSession> {
         val normalized = email.trim()
         if (!isValidEmail(normalized)) return Resource.failure(AppError.InvalidEmail)
         if (password.length < MIN_PASSWORD) return Resource.failure(AppError.InvalidPassword)
-        return repository.signIn(normalized, password)
+        return repository.signIn(normalized, password, asAdmin = asAdmin)
     }
 
     /** Lightweight email check — good enough at the UI boundary; backend has the final word. */

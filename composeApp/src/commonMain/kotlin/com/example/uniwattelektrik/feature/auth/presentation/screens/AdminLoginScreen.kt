@@ -161,7 +161,7 @@ fun AdminLoginScreen(
                     text      = "Admin Sign In",
                     isLoading = isLoading,
                     enabled   = canSubmit,
-                    onClick   = { viewModel.onEvent(AuthUiEvent.SignIn) },
+                    onClick   = { viewModel.onEvent(AuthUiEvent.SignInAsAdmin) },
                 )
             }
         }

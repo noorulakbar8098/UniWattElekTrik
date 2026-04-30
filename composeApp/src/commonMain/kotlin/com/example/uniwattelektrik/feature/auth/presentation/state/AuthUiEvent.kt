@@ -9,6 +9,7 @@ sealed interface AuthUiEvent {
     data object TogglePasswordVisibility : AuthUiEvent
     data object ToggleKeepSignedIn : AuthUiEvent
     data object SignIn : AuthUiEvent
+    data object SignInAsAdmin : AuthUiEvent
     data object SignUp : AuthUiEvent
     data object Retry : AuthUiEvent
     data object Logout : AuthUiEvent

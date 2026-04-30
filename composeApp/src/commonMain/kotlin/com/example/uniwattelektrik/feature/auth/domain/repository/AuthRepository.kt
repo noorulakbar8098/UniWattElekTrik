@@ -9,8 +9,20 @@ import kotlinx.coroutines.flow.Flow
  * Implementation lives in `data/repository/AuthRepositoryImpl`.
  */
 interface AuthRepository {
-    /** Signs in with [email] + [password] (Firebase Email/Password). Returns the new session. */
-    suspend fun signIn(email: String, password: String): Resource<AuthSession>
+    /**
+     * Signs in with [email] + [password] (Firebase Email/Password).
+     *
+     * @param asAdmin when true, the implementation will ensure the
+     *  `admins/{uid}` directory entry exists (self-healing the case where a
+     *  previous sign-up created the Firebase Auth user but the Firestore write
+     *  failed). The returned [AuthSession.user] will always have a non-null
+     *  `adminId` when this flag is true and Firebase Auth succeeded.
+     */
+    suspend fun signIn(
+        email: String,
+        password: String,
+        asAdmin: Boolean = false,
+    ): Resource<AuthSession>
 
     /** Creates a new account and returns the new session. */
     suspend fun signUp(

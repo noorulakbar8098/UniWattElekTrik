@@ -42,6 +42,9 @@ private val GradientBottom = Color(0xFF0A3D91)
 
 @Composable
 fun SplashScreen(onFinished: () -> Unit) {
+    com.example.uniwattelektrik.core.theme.SetStatusBar(
+        color = GradientTop, darkIcons = false,
+    )
     val alpha = remember { Animatable(0f) }
     val scale = remember { Animatable(0.82f) }
 

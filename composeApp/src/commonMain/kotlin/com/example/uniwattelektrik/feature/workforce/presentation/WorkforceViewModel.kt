@@ -1,0 +1,267 @@
+package com.example.uniwattelektrik.feature.workforce.presentation
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.uniwattelektrik.core.AppLog
+import com.example.uniwattelektrik.core.Resource
+import com.example.uniwattelektrik.feature.auth.data.remote.EmployeeAuthClient
+import com.example.uniwattelektrik.feature.workforce.data.remote.AttendanceRecord
+import com.example.uniwattelektrik.feature.workforce.data.remote.CheckinPing
+import com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeDraft
+import com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeRecord
+import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
+import com.example.uniwattelektrik.feature.workforce.data.remote.WorkforceDirectory
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
+
+/**
+ * Drives admin & user dashboards with **real-time Firestore data** scoped by
+ * adminId/userId. Reads are subscribed via Firestore snapshot listeners (Flow),
+ * so any add/update/delete reflects in the UI within ~100 ms — no manual refresh.
+ *
+ * Call once from a `LaunchedEffect`:
+ *   - `loadForAdmin(adminUid)` — admin dashboards
+ *   - `loadForUser(userUid)`  — employee dashboards
+ *
+ * Internally cancels any previous subscriptions on a new call.
+ */
+class WorkforceViewModel(
+    private val directory: WorkforceDirectory,
+    private val employeeAuthClient: EmployeeAuthClient,
+) : ViewModel() {
+
+    private val _employees = MutableStateFlow<List<EmployeeRecord>>(emptyList())
+    val employees: StateFlow<List<EmployeeRecord>> = _employees.asStateFlow()
+
+    private val _tasks = MutableStateFlow<List<TaskRecord>>(emptyList())
+    val tasks: StateFlow<List<TaskRecord>> = _tasks.asStateFlow()
+
+    /** Live stream of all attendance records for the current admin scope. */
+    private val _attendance = MutableStateFlow<List<AttendanceRecord>>(emptyList())
+    val attendance: StateFlow<List<AttendanceRecord>> = _attendance.asStateFlow()
+
+    /** Live stream of GPS pings under the admin scope (for the map view). */
+    private val _checkins = MutableStateFlow<List<CheckinPing>>(emptyList())
+    val checkins: StateFlow<List<CheckinPing>> = _checkins.asStateFlow()
+
+    private val _loading = MutableStateFlow(false)
+    val loading: StateFlow<Boolean> = _loading.asStateFlow()
+
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
+    // Track active subscriptions so a re-call cancels the previous listeners.
+    private var employeesJob: Job? = null
+    private var tasksJob: Job? = null
+    private var attendanceJob: Job? = null
+    private var checkinsJob: Job? = null
+
+    fun loadForAdmin(adminUid: String) {
+        // Cancel any previous subscriptions before re-binding.
+        employeesJob?.cancel()
+        tasksJob?.cancel()
+        attendanceJob?.cancel()
+        _error.value = null
+        _loading.value = true
+
+        employeesJob = directory.observeEmployees(adminUid)
+            .onEach {
+                _employees.value = it
+                _loading.value = false
+            }
+            .catch {
+                _error.value = it.message
+                _loading.value = false
+            }
+            .launchIn(viewModelScope)
+
+        tasksJob = directory.observeTasksForAdmin(adminUid)
+            .onEach { _tasks.value = it }
+            .catch { _error.value = it.message }
+            .launchIn(viewModelScope)
+
+        attendanceJob = directory.observeAttendance(adminUid)
+            .onEach { _attendance.value = it }
+            .catch { _error.value = it.message }
+            .launchIn(viewModelScope)
+
+        checkinsJob = directory.observeCheckins(adminUid)
+            .onEach { _checkins.value = it }
+            .catch { _error.value = it.message }
+            .launchIn(viewModelScope)
+    }
+
+    /**
+     * Subscribe to data scoped to an employee. [adminUid] is the employee's
+     * `parentAdminId` (the owning admin's Firebase UID) — required so the
+     * attendance subscription reads from the same `admins/{adminId}/attendance`
+     * collection the admin sees.
+     */
+    fun loadForUser(userUid: String, adminUid: String? = null) {
+        employeesJob?.cancel()
+        tasksJob?.cancel()
+        attendanceJob?.cancel()
+        _error.value = null
+        _loading.value = true
+
+        tasksJob = directory.observeTasksForUser(userUid)
+            .onEach {
+                _tasks.value = it
+                _loading.value = false
+            }
+            .catch {
+                _error.value = it.message
+                _loading.value = false
+            }
+            .launchIn(viewModelScope)
+
+        // Subscribe to attendance so the user screen sees its own check-in
+        // record reactively (and so the admin's writes/check-outs are visible).
+        if (!adminUid.isNullOrBlank()) {
+            attendanceJob = directory.observeAttendance(adminUid)
+                .onEach { _attendance.value = it }
+                .catch { _error.value = it.message }
+                .launchIn(viewModelScope)
+
+            // Also subscribe to employees so the user screen can read its own
+            // profile (shift, name, etc.) for shift countdowns.
+            employeesJob = directory.observeEmployees(adminUid)
+                .onEach { _employees.value = it }
+                .catch { _error.value = it.message }
+                .launchIn(viewModelScope)
+        }
+    }
+
+    /**
+     * Records a check-in for [userId] under [adminUid]'s attendance collection.
+     * Returns the created [AttendanceRecord] via [onDone] so callers can store
+     * its id (used later by [markCheckOut]).
+     *
+     * [lat] / [lng] are the captured GPS coordinates (null when location
+     * unavailable). [checkInStatus] is `"ON_TIME"` or `"LATE"` — derived by
+     * the caller from the user's shift configuration.
+     */
+    fun markCheckIn(
+        adminUid: String,
+        userId: String,
+        lat: Double? = null,
+        lng: Double? = null,
+        checkInStatus: String = "ON_TIME",
+        onDone: (Result<AttendanceRecord>) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            val result = runCatching {
+                directory.markCheckIn(adminUid, userId, lat, lng, checkInStatus)
+            }
+            result.onFailure {
+                AppLog.w("WorkforceVM", "markCheckIn failed: ${it.message}")
+                _error.value = it.message
+            }
+            onDone(result)
+        }
+    }
+
+    /** Records a GPS ping for the current user — used when they check in. */
+    fun recordCheckinPing(
+        adminUid: String,
+        userId: String,
+        latitude: Double,
+        longitude: Double,
+    ) {
+        viewModelScope.launch {
+            runCatching { directory.recordCheckIn(adminUid, userId, latitude, longitude) }
+                .onFailure { AppLog.w("WorkforceVM", "recordCheckinPing failed: ${it.message}") }
+        }
+    }
+
+    /** Updates an existing attendance doc with `checkOut = serverTimestamp`
+     *  and the captured check-out coordinates (may be null). */
+    fun markCheckOut(
+        adminUid: String,
+        userId: String,
+        attendanceId: String,
+        lat: Double? = null,
+        lng: Double? = null,
+        onDone: (Result<Unit>) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            val result = runCatching {
+                directory.markCheckOut(adminUid, userId, attendanceId, lat, lng)
+            }
+            result.onFailure {
+                AppLog.w("WorkforceVM", "markCheckOut failed: ${it.message}")
+                _error.value = it.message
+            }
+            onDone(result)
+        }
+    }
+
+    /**
+     * Two-step write:
+     *   1. Create a Firebase Auth account on a *secondary* app so the admin
+     *      stays signed in.
+     *   2. Persist the Firestore profile under `admins/{adminUid}/users/{uid}`
+     *      using the new uid as the doc id.
+     *
+     * `onDone` returns the created [EmployeeRecord] on success so the UI can
+     * show a "Share via WhatsApp" card with the temp credentials.
+     */
+    fun addEmployee(
+        adminUid: String,
+        draft: EmployeeDraft,
+        onDone: (Result<EmployeeRecord>) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            _loading.value = true
+            _error.value = null
+            val auth = employeeAuthClient.createEmployee(
+                email = draft.email,
+                password = draft.password,
+                displayName = draft.name,
+            )
+            when (auth) {
+                is Resource.Failure -> {
+                    AppLog.w("WorkforceVM", "createEmployee auth failed: ${auth.error.message}")
+                    _error.value = auth.error.message
+                    _loading.value = false
+                    onDone(Result.failure(IllegalStateException(auth.error.message)))
+                    return@launch
+                }
+                is Resource.Success -> {
+                    val uid = auth.data
+                    val result = runCatching { directory.addEmployee(adminUid, uid, draft) }
+                    result.onFailure {
+                        AppLog.w("WorkforceVM", "addEmployee firestore failed: ${it.message}")
+                        _error.value = it.message
+                    }
+                    _loading.value = false
+                    onDone(result)
+                }
+            }
+        }
+    }
+
+    fun addTask(
+        adminUid: String,
+        userId: String?,
+        title: String,
+        location: String,
+        time: String,
+        day: String,
+        priority: String,
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                directory.addTask(adminUid, userId, title, location, time, day, priority)
+            }.onFailure { _error.value = it.message }
+        }
+    }
+
+    fun clearError() { _error.value = null }
+}

@@ -51,6 +51,12 @@ kotlin {
         iosTarget.binaries.framework {
             baseName = "ComposeApp"
             isStatic = true
+            // GitLive Firebase exports its types — needed so iosApp.swift can
+            // see them and so linker can resolve Firebase symbols correctly.
+            export(libs.gitlive.firebase.auth)
+            // Link against the Firebase Apple SDK that the iosApp Xcode project
+            // ships in via Swift Package Manager (FirebaseAuth product).
+            linkerOpts("-framework", "FirebaseAuth")
         }
     }
     
@@ -60,7 +66,17 @@ kotlin {
             implementation(libs.androidx.activity.compose)
             implementation(libs.firebase.auth)
             implementation(libs.firebase.firestore)
+            implementation(libs.firebase.storage)
+            implementation(libs.coil.network.okhttp)
             implementation(libs.kotlinx.coroutines.playServices)
+            implementation(libs.play.services.location)
+            implementation(libs.osmdroid.android)
+        }
+        iosMain.dependencies {
+            // Real Firebase Auth on iOS via the GitLive KMP wrapper. Requires
+            // the iosApp Xcode project to add the Firebase Apple SDK (SPM)
+            // and call FirebaseApp.configure() on launch.
+            api(libs.gitlive.firebase.auth)
         }
         commonMain.dependencies {
             implementation(libs.compose.runtime)
@@ -73,6 +89,8 @@ kotlin {
             implementation(libs.androidx.lifecycle.viewmodelCompose)
             implementation(libs.androidx.lifecycle.runtimeCompose)
             implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kotlinx.datetime)
+            implementation(libs.coil.compose)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

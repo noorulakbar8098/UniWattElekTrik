@@ -2,6 +2,7 @@ package com.example.uniwattelektrik.feature.auth.presentation.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.uniwattelektrik.core.AppLog
 import com.example.uniwattelektrik.core.Resource
 import com.example.uniwattelektrik.feature.auth.domain.usecase.LogoutUseCase
 import com.example.uniwattelektrik.feature.auth.domain.usecase.ObserveSessionUseCase
@@ -25,9 +26,14 @@ class AuthViewModel(
     private val signUp: SignUpUseCase,
     private val logoutUseCase: LogoutUseCase,
     observeSession: ObserveSessionUseCase,
+    bootstrap: suspend () -> Unit = {},
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow<AuthUiState>(AuthUiState.Idle)
+    /** Cold-start state is [AuthUiState.Bootstrapping] so the app sits on the
+     *  splash until the persisted session is restored. We flip to `Verified`
+     *  if a session is found, else `Idle` (login). This avoids the 1-2 s
+     *  Login-screen flash on relaunch. */
+    private val _state = MutableStateFlow<AuthUiState>(AuthUiState.Bootstrapping)
     val state: StateFlow<AuthUiState> = _state.asStateFlow()
 
     private val _email = MutableStateFlow("")
@@ -52,7 +58,10 @@ class AuthViewModel(
     private var lastIntent: AuthUiEvent? = null
 
     init {
-        // Auto-promote to Verified when a persisted session is observed at cold start.
+        // Observe session changes (logout, sign-in elsewhere, etc.) and promote
+        // to Verified whenever a session appears. Initial Bootstrapping → Idle
+        // transition is owned by the `bootstrap` job below so we never flash
+        // the Login screen while the persisted session is still being read.
         observeSession()
             .onEach { session ->
                 if (session != null && _state.value !is AuthUiState.Verified) {
@@ -60,6 +69,17 @@ class AuthViewModel(
                 }
             }
             .launchIn(viewModelScope)
+
+        // Restore the persisted session on cold start. Once the suspend call
+        // returns, we *know* whether the user is signed in — flip out of the
+        // Bootstrapping state. If the observer above already promoted us to
+        // Verified, we leave it alone; otherwise we resolve to Idle.
+        viewModelScope.launch {
+            try { bootstrap() } catch (_: Throwable) { /* fall through */ }
+            if (_state.value is AuthUiState.Bootstrapping) {
+                _state.value = AuthUiState.Idle
+            }
+        }
     }
 
     fun onEvent(event: AuthUiEvent) {
@@ -70,7 +90,8 @@ class AuthViewModel(
             is AuthUiEvent.FullNameChanged        -> _fullName.value        = event.value
             AuthUiEvent.TogglePasswordVisibility  -> _passwordVisible.value = !_passwordVisible.value
             AuthUiEvent.ToggleKeepSignedIn        -> _keepSignedIn.value    = !_keepSignedIn.value
-            AuthUiEvent.SignIn                    -> { lastIntent = event; performSignIn() }
+            AuthUiEvent.SignIn                    -> { lastIntent = event; performSignIn(asAdmin = false) }
+            AuthUiEvent.SignInAsAdmin             -> { lastIntent = event; performSignIn(asAdmin = true) }
             AuthUiEvent.SignUp                    -> { lastIntent = event; performSignUp() }
             AuthUiEvent.Retry                     -> lastIntent?.let { onEvent(it) }
             AuthUiEvent.DismissError              -> (_state.value as? AuthUiState.Error)?.let {
@@ -92,13 +113,13 @@ class AuthViewModel(
         _fullName.value = ""
     }
 
-    private fun performSignIn() {
+    private fun performSignIn(asAdmin: Boolean = false) {
         val previous = _state.value
         val email = _email.value
         val pwd = _password.value
         _state.value = AuthUiState.Loading
         viewModelScope.launch {
-            _state.value = when (val result = signIn(email, pwd)) {
+            _state.value = when (val result = signIn(email, pwd, asAdmin = asAdmin)) {
                 is Resource.Success -> AuthUiState.Verified(result.data.user)
                 is Resource.Failure -> AuthUiState.Error(result.error.message, previous)
             }
@@ -111,11 +132,20 @@ class AuthViewModel(
         val email = _email.value
         val pwd = _password.value
         val confirm = _confirmPassword.value
+        AppLog.i("SignUp", "▶ start  email=$email name='$name' pwdLen=${pwd.length} confirmLen=${confirm.length}")
         _state.value = AuthUiState.Loading
         viewModelScope.launch {
-            _state.value = when (val result = signUp(name, email, pwd, confirm)) {
-                is Resource.Success -> AuthUiState.Verified(result.data.user)
-                is Resource.Failure -> AuthUiState.Error(result.error.message, previous)
+            val result = signUp(name, email, pwd, confirm)
+            _state.value = when (result) {
+                is Resource.Success -> {
+                    val u = result.data.user
+                    AppLog.i("SignUp", "✅ success uid=${u.id} adminId=${u.adminId} email=${u.email}")
+                    AuthUiState.Verified(u)
+                }
+                is Resource.Failure -> {
+                    AppLog.e("SignUp", "❌ failed reason=${result.error.message}")
+                    AuthUiState.Error(result.error.message, previous)
+                }
             }
         }
     }

@@ -1,6 +1,7 @@
 package com.example.uniwattelektrik.feature.auth.data.remote
 
 import com.example.uniwattelektrik.core.AppError
+import com.example.uniwattelektrik.core.AppLog
 import com.example.uniwattelektrik.core.Resource
 import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.FirebaseTooManyRequestsException
@@ -56,15 +57,19 @@ class FirebaseEmailAuthClient(
         password: String,
         displayName: String?,
     ): Resource<EmailAuthResult> = try {
+        AppLog.i("FbAuth", "createUserWithEmailAndPassword email=$email displayName=$displayName")
         val authResult = auth.createUserWithEmailAndPassword(email, password).await()
         val user = authResult.user ?: return Resource.failure(AppError.Unknown("No user returned"))
+        AppLog.i("FbAuth", "  ↳ created uid=${user.uid}")
         if (!displayName.isNullOrBlank()) {
             user.updateProfile(
                 UserProfileChangeRequest.Builder().setDisplayName(displayName).build()
             ).await()
+            AppLog.d("FbAuth", "  ↳ displayName updated")
         }
         val token = user.getIdToken(false).await().token
             ?: return Resource.failure(AppError.Unknown("No ID token"))
+        AppLog.d("FbAuth", "  ↳ idToken obtained (len=${token.length})")
         Resource.success(
             EmailAuthResult(
                 uid = user.uid,
@@ -76,16 +81,17 @@ class FirebaseEmailAuthClient(
     } catch (e: CancellationException) {
         throw e
     } catch (e: FirebaseAuthUserCollisionException) {
-        Resource.failure(AppError.EmailAlreadyInUse)
+        AppLog.w("FbAuth", "signUp: email already in use", e); Resource.failure(AppError.EmailAlreadyInUse)
     } catch (e: FirebaseAuthWeakPasswordException) {
-        Resource.failure(AppError.WeakPassword)
+        AppLog.w("FbAuth", "signUp: weak password", e); Resource.failure(AppError.WeakPassword)
     } catch (e: FirebaseAuthInvalidCredentialsException) {
-        Resource.failure(AppError.InvalidCredentials)
+        AppLog.w("FbAuth", "signUp: invalid credentials/email", e); Resource.failure(AppError.InvalidCredentials)
     } catch (e: FirebaseTooManyRequestsException) {
-        Resource.failure(AppError.QuotaExceeded)
+        AppLog.w("FbAuth", "signUp: quota exceeded", e); Resource.failure(AppError.QuotaExceeded)
     } catch (e: FirebaseNetworkException) {
-        Resource.failure(AppError.Network)
+        AppLog.w("FbAuth", "signUp: network", e); Resource.failure(AppError.Network)
     } catch (e: Throwable) {
+        AppLog.e("FbAuth", "signUp: unknown", e)
         Resource.failure(AppError.Unknown(e.message ?: e::class.simpleName ?: "Unknown error"))
     }
 }
