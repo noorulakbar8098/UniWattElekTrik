@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand blue used as window background during cold-start -->
+    <color name="splash_bg">#2979FF</color>
+</resources>
