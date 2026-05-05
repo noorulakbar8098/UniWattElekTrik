@@ -1,7 +1,9 @@
 package com.example.uniwattelektrik
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.systemBars
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -18,8 +21,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.uniwattelektrik.core.components.ScreenSkeletonOverlay
+import com.example.uniwattelektrik.core.components.SkeletonType
+import com.example.uniwattelektrik.core.components.shimmerOverlay
 import com.example.uniwattelektrik.di.AppContainer
 import com.example.uniwattelektrik.feature.admin.presentation.AdminShell
 import com.example.uniwattelektrik.feature.auth.presentation.screens.AdminLoginScreen
@@ -44,6 +53,7 @@ fun App() {
     // the splash stays up until the persisted session is fully restored.
     val viewModel = remember { AppContainer.createAuthViewModel() }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val loadingMessage by viewModel.loadingMessage.collectAsStateWithLifecycle()
 
     // Hold the splash until either: the minimum splash duration has passed
     // AND the auth state has resolved (Verified or Idle), OR the user is
@@ -91,7 +101,15 @@ fun App() {
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
-            Box(modifier = Modifier.fillMaxSize()) {
+            // Shimmer overlay only AFTER login (workspace screens). Auth screens
+            // get a clean surface — the user explicitly asked for a simple
+            // progress indicator during login/logout instead of the shimmer.
+            val showShimmer = screenState is AuthUiState.Verified
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .let { if (showShimmer) it.shimmerOverlay() else it }
+            ) {
                 when (screenState) {
                     is AuthUiState.Verified -> {
                         // Role split: admins see the AdminShell, employees see the UserShell.
@@ -122,6 +140,42 @@ fun App() {
                                 viewModel = viewModel,
                                 onBack = { viewModel.clearForm(); route = AuthRoute.AdminLogin },
                             )
+                        }
+                    }
+                }
+
+                if (state is AuthUiState.Loading) {
+                    if (screenState is AuthUiState.Verified) {
+                        // Inside the workspace — keep the skeleton overlay
+                        // (data is loading after login).
+                        ScreenSkeletonOverlay(
+                            type = SkeletonType.Dashboard,
+                            message = loadingMessage,
+                        )
+                    } else {
+                        // Auth flow loading — simple centered spinner.
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.25f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                CircularProgressIndicator(
+                                    color = Color(0xFF2979FF),
+                                    strokeWidth = 3.dp,
+                                )
+                                if (loadingMessage.isNotBlank()) {
+                                    Text(
+                                        text = loadingMessage,
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                    )
+                                }
+                            }
                         }
                     }
                 }

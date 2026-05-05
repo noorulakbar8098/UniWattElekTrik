@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material.icons.outlined.Notifications
@@ -69,8 +70,22 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.uniwattelektrik.core.theme.AppTypography
 import com.example.uniwattelektrik.core.theme.SetStatusBar
 import com.example.uniwattelektrik.feature.auth.domain.model.User
+import com.example.uniwattelektrik.feature.admin.presentation.InventoryViewModel
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
+import com.example.uniwattelektrik.feature.admin.presentation.screens.components.ActivityItem
+import com.example.uniwattelektrik.feature.admin.presentation.screens.components.FeedFilter
+import com.example.uniwattelektrik.feature.admin.presentation.screens.components.FeedFilterChips
+import com.example.uniwattelektrik.feature.admin.presentation.screens.components.NeedsAttentionItem
+import com.example.uniwattelektrik.feature.admin.presentation.screens.components.NeedsAttentionStrip
+import com.example.uniwattelektrik.feature.admin.presentation.screens.components.PerformanceInsightCard
+import com.example.uniwattelektrik.feature.admin.presentation.screens.components.Sparkline
+import com.example.uniwattelektrik.feature.admin.presentation.screens.components.YourDayCard
+import com.example.uniwattelektrik.feature.admin.presentation.screens.components.applyFilter
+import com.example.uniwattelektrik.feature.admin.presentation.screens.components.buildNeedsAttention
+import com.example.uniwattelektrik.feature.admin.presentation.screens.components.buildPerformanceInsight
+import com.example.uniwattelektrik.feature.admin.presentation.screens.components.buildYourDay
+import com.example.uniwattelektrik.feature.admin.presentation.screens.components.sparkline7Day
 import com.example.uniwattelektrik.platform.minutesOfDay
 import com.example.uniwattelektrik.platform.nowEpochMillis
 
@@ -172,16 +187,24 @@ private fun Modifier.premiumCard(
 fun AdminHomeScreen(
     user: User,
     workforceVm: WorkforceViewModel,
+    inventoryVm: InventoryViewModel,
     onOpenNotifications: () -> Unit,
+    onTaskClick: (String) -> Unit = {},
+    onEmployeeClick: (String) -> Unit = {},
+    onAttendanceClick: () -> Unit = {},
+    onSpareClick: (com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItem) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val employees by workforceVm.employees.collectAsStateWithLifecycle()
     val tasks     by workforceVm.tasks.collectAsStateWithLifecycle()
+    val attendance by workforceVm.attendance.collectAsStateWithLifecycle()
+    val spareItems by inventoryVm.spareItems.collectAsStateWithLifecycle()
 
     val totalEmployees = employees.size.coerceAtLeast(0)
     val activeTasks    = tasks.count { it.status != "Done" }
     val completedTasks = tasks.count { it.status == "Done" }
     val pendingHigh    = tasks.count { it.priority == "High" && it.status != "Done" }
+    val totalSpares    = spareItems.size
 
     // One-shot scale-in for the floating KPI grid
     var loaded by remember { mutableStateOf(false) }
@@ -208,8 +231,47 @@ fun AdminHomeScreen(
     val (greetingText, greetingEmoji) = greetingFor(nowMs)
 
     val recentTasks = remember(tasks) {
-        tasks.sortedByDescending { it.id.hashCode() }.take(5)
+        tasks.sortedByDescending {
+            it.completedAt ?: it.updatedAt ?: it.scheduledDateMs ?: 0L
+        }.take(5)
     }
+
+    // Real-time activity feed merged from tasks + employees + attendance + spares.
+    // Re-derived whenever any source changes; capped at 25 newest items.
+    val activityItems = remember(tasks, employees, attendance, spareItems, nowMs) {
+        com.example.uniwattelektrik.feature.admin.presentation.screens.components.buildActivityFeed(
+            tasks      = tasks,
+            employees  = employees,
+            attendance = attendance,
+            spares     = spareItems,
+            now        = nowMs,
+        )
+    }
+
+    // ── Tier 2 / Tier 3 derivations ─────────────────────────────────────────
+    var selectedFilter by remember { mutableStateOf(FeedFilter.All) }
+    val filteredActivityItems = remember(activityItems, selectedFilter) {
+        activityItems.applyFilter(selectedFilter)
+    }
+    val activityCounts = remember(activityItems) {
+        activityItems.groupingBy { it.category }.eachCount()
+    }
+    val needsAttention = remember(tasks, employees, attendance, spareItems, nowMs) {
+        buildNeedsAttention(
+            tasks = tasks, employees = employees, attendance = attendance,
+            spares = spareItems, now = nowMs,
+        )
+    }
+    val yourDay = remember(tasks, employees, attendance, spareItems, nowMs) {
+        buildYourDay(
+            tasks = tasks, employees = employees, attendance = attendance,
+            spares = spareItems, now = nowMs,
+        )
+    }
+    val performanceInsight = remember(tasks, employees, nowMs) {
+        buildPerformanceInsight(tasks = tasks, employees = employees, now = nowMs)
+    }
+    val sparklinePoints = remember(tasks, nowMs) { sparkline7Day(tasks, nowMs) }
 
     // Push a status-bar style that matches the gradient header.
     SetStatusBar(
@@ -261,6 +323,13 @@ fun AdminHomeScreen(
                     liveTasks = activeTasks,
                     alerts    = pendingHigh,
                 )
+            }
+
+            // 0b. Personalised "Your Day" hero card — derived from today's data.
+            item {
+                Box(modifier = Modifier.padding(horizontal = 20.dp)) {
+                    YourDayCard(stats = yourDay)
+                }
             }
 
             // 1. KPI grid — sits below header (not floating)
@@ -320,6 +389,22 @@ fun AdminHomeScreen(
                         alpha        = gridAlpha,
                     )
                 }
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    KpiCard(
+                        modifier     = Modifier.weight(1f),
+                        icon         = Icons.Filled.Inventory2,
+                        glow         = Highlight,
+                        value        = totalSpares.toString(),
+                        label        = "Spare Items",
+                        badgeText    = "Stock",
+                        badgeBg      = Color(0xFFE0EAFF),
+                        badgeFg      = Highlight,
+                        alpha        = gridAlpha,
+                    )
+                    // Empty placeholder weight to keep the new row aligned with the
+                    // 2-column grid above. Replace later with another KPI when ready.
+                    Box(modifier = Modifier.weight(1f))
+                }
             }
         }
 
@@ -345,6 +430,13 @@ fun AdminHomeScreen(
                             fontSize = 12.sp,
                         )
                     }
+                    Sparkline(
+                        points = sparklinePoints,
+                        tint   = Highlight,
+                        width  = 56.dp,
+                        height = 22.dp,
+                    )
+                    Spacer(Modifier.width(8.dp))
                     Text(
                         text       = "This week →",
                         color      = Highlight,
@@ -434,7 +526,29 @@ fun AdminHomeScreen(
                     }
                 }
 
-                RecentActivityCard()
+                RecentActivityCard(
+                    items   = activityItems,
+                    nowMs   = nowMs,
+                    onClick = { item ->
+                        when (item) {
+                            is com.example.uniwattelektrik.feature.admin.presentation.screens.components.ActivityItem.TaskCompleted ->
+                                onTaskClick(item.taskId)
+                            is com.example.uniwattelektrik.feature.admin.presentation.screens.components.ActivityItem.TaskAssigned ->
+                                onTaskClick(item.taskId)
+                            is com.example.uniwattelektrik.feature.admin.presentation.screens.components.ActivityItem.TaskOverdue ->
+                                onTaskClick(item.taskId)
+                            is com.example.uniwattelektrik.feature.admin.presentation.screens.components.ActivityItem.EmployeeOnboarded ->
+                                onEmployeeClick(item.employeeId)
+                            is com.example.uniwattelektrik.feature.admin.presentation.screens.components.ActivityItem.CheckedIn,
+                            is com.example.uniwattelektrik.feature.admin.presentation.screens.components.ActivityItem.CheckedOut ->
+                                onAttendanceClick()
+                            is com.example.uniwattelektrik.feature.admin.presentation.screens.components.ActivityItem.LowStockAlert ->
+                                onSpareClick(item.spareItem)
+
+                            else -> {}
+                        }
+                    },
+                )
             }
         }
 
@@ -1069,44 +1183,16 @@ private fun StatusPulsePill(
  *  alerts). Premium card surface matching the rest of the dashboard.
  * ────────────────────────────────────────────────────────────────────────── */
 @Composable
-private fun RecentActivityCard() {
-    val shape = RoundedCornerShape(20.dp)
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .premiumCard(shape)
-            .padding(horizontal = 18.dp, vertical = 14.dp),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            ActivityRow(
-                emoji = "✅", tint = Success,
-                title = "Task completed",
-                body  = "Alex closed “Wiring inspection · Block C”",
-                time  = "2m ago",
-            )
-            ActivityDivider()
-            ActivityRow(
-                emoji = "🟢", tint = Highlight,
-                title = "Check-in",
-                body  = "Priya checked in at site Atrium 4F",
-                time  = "12m ago",
-            )
-            ActivityDivider()
-            ActivityRow(
-                emoji = "⚠️", tint = Danger,
-                title = "High-priority alert",
-                body  = "Generator #2 voltage dip · auto-ticket raised",
-                time  = "32m ago",
-            )
-            ActivityDivider()
-            ActivityRow(
-                emoji = "📋", tint = Warning,
-                title = "Task assigned",
-                body  = "“Conduit replacement · Floor 7” → Ravi",
-                time  = "1h ago",
-            )
-        }
-    }
+private fun RecentActivityCard(
+    items: List<com.example.uniwattelektrik.feature.admin.presentation.screens.components.ActivityItem>,
+    nowMs: Long,
+    onClick: (com.example.uniwattelektrik.feature.admin.presentation.screens.components.ActivityItem) -> Unit,
+) {
+    com.example.uniwattelektrik.feature.admin.presentation.screens.components.ActivityFeedCard(
+        items       = items,
+        now         = nowMs,
+        onItemClick = onClick,
+    )
 }
 
 @Composable
@@ -1117,6 +1203,9 @@ private fun ActivityRow(
     body: String,
     time: String,
 ) {
+    // Legacy helper, retained only for backward compatibility with anything
+    // still wired to this signature. The real feed is rendered by
+    // [ActivityFeedCard] above.
     Row(verticalAlignment = Alignment.Top) {
         Box(
             modifier = Modifier

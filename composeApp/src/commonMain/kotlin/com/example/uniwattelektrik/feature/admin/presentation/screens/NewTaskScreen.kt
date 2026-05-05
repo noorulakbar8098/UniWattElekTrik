@@ -121,8 +121,8 @@ private val Divider      = Color(0xFFE2E8F0)
 /**
  * Advanced multi-section task creation form (8 collapsible sections).
  *
- * Sections: Overview · Assignment · Workflow · SLA & Scheduling ·
- *           Location · Priority & Impact · Attachments & Checklist ·
+ * Sections: Overview · Assignment · Service Scheduling ·
+ *           Location · Priority · Attachments & Checklist ·
  *           Notifications.
  *
  * Bottom bar: Save Draft · Preview · Create Task.
@@ -136,11 +136,15 @@ private val Divider      = Color(0xFFE2E8F0)
 @Composable
 fun NewTaskScreen(
     workforceVm: WorkforceViewModel,
+    inventoryVm: com.example.uniwattelektrik.feature.admin.presentation.InventoryViewModel,
     adminUid: String,
     onBack: () -> Unit,
     onCreated: () -> Unit,
+    adminDisplayName: String = "",
 ) {
     val employees by workforceVm.employees.collectAsStateWithLifecycle()
+    val departments by inventoryVm.departments.collectAsStateWithLifecycle()
+    val equipmentAll by inventoryVm.equipment.collectAsStateWithLifecycle()
 
     com.example.uniwattelektrik.core.theme.SetStatusBar(color = Brand, darkIcons = false)
 
@@ -148,8 +152,6 @@ fun NewTaskScreen(
     val taskId = remember { autoTaskId() }
     var title       by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
-    var taskType    by remember { mutableStateOf("Maintenance") }
-    var category    by remember { mutableStateOf("Electrical") }
 
     /* ── Section 2: Assignment ─────────────────────────────────────── */
     val selectedAssignees = remember { mutableStateListOf<String>() }
@@ -157,12 +159,7 @@ fun NewTaskScreen(
     var teamFilter        by remember { mutableStateOf("All teams") }
     var autoAssign        by remember { mutableStateOf(false) }
 
-    /* ── Section 3: Workflow ──────────────────────────────────────── */
-    var status            by remember { mutableStateOf("Assigned") }
-    var workflowStage     by remember { mutableStateOf("Field execution") }
-    var approvalRequired  by remember { mutableStateOf(false) }
-
-    /* ── Section 4: SLA & Scheduling ──────────────────────────────── */
+    /* ── Section 3: Service Scheduling ─────────────────────────────── */
     var slaHours      by remember { mutableStateOf("6") }
     var slaMinutes    by remember { mutableStateOf("0") }
     var startDateMs   by remember { mutableStateOf<Long?>(null) }
@@ -171,22 +168,67 @@ fun NewTaskScreen(
     var endDateMs     by remember { mutableStateOf<Long?>(null) }
     var endHour       by remember { mutableStateOf(18) }
     var endMinute     by remember { mutableStateOf(0) }
-    var breachRule    by remember { mutableStateOf("Notify supervisor") }
-    var escalateAfter by remember { mutableStateOf("30") } // minutes
 
-    /* ── Section 5: Location ──────────────────────────────────────── */
+    /* ── Section 4: Location ──────────────────────────────────────── */
     var location       by remember { mutableStateOf("") }
-    var geofenceOn     by remember { mutableStateOf(true) }
+    var resolvedLat    by remember { mutableStateOf<Double?>(null) }
+    var resolvedLng    by remember { mutableStateOf<Double?>(null) }
+    var geocoding      by remember { mutableStateOf(false) }
+    val geocoder       = remember { com.example.uniwattelektrik.core.platform.createAddressGeocoder() }
 
-    /* ── Section 6: Priority & Impact ─────────────────────────────── */
+    // Debounced geocode on address change.
+    androidx.compose.runtime.LaunchedEffect(location) {
+        val query = location.trim()
+        if (query.length < 4) {
+            resolvedLat = null
+            resolvedLng = null
+            geocoding   = false
+            return@LaunchedEffect
+        }
+        kotlinx.coroutines.delay(600)
+        geocoding = true
+        val result = geocoder.geocode(query)
+        if (result != null) {
+            resolvedLat = result.latitude
+            resolvedLng = result.longitude
+        } else {
+            resolvedLat = null
+            resolvedLng = null
+        }
+        geocoding = false
+    }
+
+    /* ── Section 5: Priority ──────────────────────────────────────── */
     var priority by remember { mutableStateOf("Medium") }
-    var impact   by remember { mutableStateOf("Medium") }
     var risk     by remember { mutableStateOf("Low") }
+
+    /* ── Service details (Department + Equipment) ─────────────────── */
+    var selectedDeptId   by remember { mutableStateOf<String?>(null) }
+    var selectedEquipId  by remember { mutableStateOf<String?>(null) }
+    var showDeptSheet    by remember { mutableStateOf(false) }
+    var showEquipSheet   by remember { mutableStateOf(false) }
+    val selectedDept     = departments.firstOrNull { it.id == selectedDeptId }
+    val equipmentInDept  = remember(equipmentAll, selectedDeptId) {
+        if (selectedDeptId == null) emptyList()
+        else equipmentAll.filter { it.departmentId == selectedDeptId }
+    }
+    val selectedEquip    = equipmentInDept.firstOrNull { it.id == selectedEquipId }
 
     /* ── Section 7: Attachments & Checklist ───────────────────────── */
     val attachments = remember { mutableStateListOf<String>() }
     val checklist   = remember { mutableStateListOf<String>() }
     var newChecklist by remember { mutableStateOf("") }
+    var showAttachmentPicker by remember { mutableStateOf(false) }
+    var uploadingAttachment by remember { mutableStateOf(false) }
+    val attachmentLauncher = com.example.uniwattelektrik.core.platform.rememberAttachmentLauncher { uri ->
+        uploadingAttachment = true
+        workforceVm.uploadAttachment(adminUid, uri) { result ->
+            uploadingAttachment = false
+            result.getOrNull()?.takeIf { it.isNotBlank() }?.let { url ->
+                attachments.add(url)
+            }
+        }
+    }
 
     /* ── Section 8: Notifications ─────────────────────────────────── */
     var notifyAssignee   by remember { mutableStateOf(true) }
@@ -257,26 +299,6 @@ fun NewTaskScreen(
                         placeholder = "Add work scope, precautions, materials…",
                         minHeight = 80.dp,
                     )
-
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            FieldLabel("Task Type")
-                            DottedSelect(
-                                value = taskType, onChange = { taskType = it },
-                                options = listOf("Maintenance", "Inspection", "Installation", "Repair", "Audit"),
-                                leadingIcon = Icons.Filled.Category,
-                            )
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            FieldLabel("Category")
-                            DottedSelect(
-                                value = category, onChange = { category = it },
-                                options = listOf("Electrical", "Civil", "Mechanical", "Networking"),
-                                leadingIcon = Icons.Filled.Category,
-                            )
-                        }
-                    }
                 }
             }
 
@@ -338,47 +360,48 @@ fun NewTaskScreen(
                 }
             }
 
-            /* 3. Workflow & Status */
+            /* 3. Service Scheduling */
             item {
                 AccordionSection(
-                    index = 2, title = "Workflow & Status",
-                    icon = Icons.Filled.TrendingUp,
+                    index = 2, title = "Service Details",
+                    icon = Icons.Filled.Category,
                     tint = Brand, bg = Brand50,
                     expandedMap = expanded,
                 ) {
-                    FieldLabel("Initial status")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StatusPickChip("Assigned",   status == "Assigned",
-                                       { status = "Assigned" }, Brand, Brand50)
-                        StatusPickChip("In progress", status == "InProgress",
-                                       { status = "InProgress" }, Warning, WarningBg)
-                        StatusPickChip("Completed",   status == "Completed",
-                                       { status = "Completed" }, Success, SuccessBg)
-                    }
-
-                    Spacer(Modifier.height(14.dp))
-                    FieldLabel("Workflow stage")
-                    DottedSelect(
-                        value = workflowStage, onChange = { workflowStage = it },
-                        options = listOf("Triage", "Field execution",
-                                         "Supervisor review", "Customer sign-off"),
-                        leadingIcon = Icons.Filled.TrendingUp,
+                    FieldLabel("Department")
+                    DottedClickable(
+                        leadingIcon = Icons.Filled.Category,
+                        leadingTint = Brand, leadingBg = Brand50,
+                        value = selectedDept?.name ?: "Select a department",
+                        muted = selectedDept == null,
+                        onClick = { showDeptSheet = true },
                     )
 
                     Spacer(Modifier.height(12.dp))
-                    ToggleRow(
-                        title = "Approval required",
-                        subtitle = "Supervisor must approve before status moves to Done",
-                        checked = approvalRequired, onChange = { approvalRequired = it },
-                        tint = Brand,
+                    FieldLabel("Equipment")
+                    DottedClickable(
+                        leadingIcon = Icons.Filled.Category,
+                        leadingTint = Brand, leadingBg = Brand50,
+                        value = when {
+                            selectedDept == null      -> "Pick a department first"
+                            equipmentInDept.isEmpty() -> "No equipment in this department"
+                            selectedEquip == null     -> "Select equipment"
+                            else                      -> selectedEquip.name
+                        },
+                        muted = selectedEquip == null,
+                        onClick = {
+                            if (selectedDept != null && equipmentInDept.isNotEmpty()) {
+                                showEquipSheet = true
+                            }
+                        },
                     )
                 }
             }
 
-            /* 4. SLA & Scheduling */
+            /* 4. Service Scheduling */
             item {
                 AccordionSection(
-                    index = 3, title = "SLA & Scheduling",
+                    index = 3, title = "Service Scheduling",
                     icon = Icons.Filled.Schedule,
                     tint = Warning, bg = WarningBg,
                     expandedMap = expanded,
@@ -446,29 +469,10 @@ fun NewTaskScreen(
                             )
                         }
                     }
-
-                    Spacer(Modifier.height(14.dp))
-                    FieldLabel("On SLA breach")
-                    DottedSelect(
-                        value = breachRule, onChange = { breachRule = it },
-                        options = listOf("Notify supervisor", "Auto re-assign",
-                                         "Open incident", "Do nothing"),
-                        leadingIcon = Icons.Filled.Flag,
-                    )
-
-                    Spacer(Modifier.height(12.dp))
-                    FieldLabel("Escalate after (minutes past deadline)")
-                    DottedField(
-                        value = escalateAfter,
-                        onChange = { escalateAfter = it.filter { c -> c.isDigit() }.take(4) },
-                        leadingIcon = Icons.Filled.HourglassEmpty,
-                        leadingTint = Danger, leadingBg = DangerBg,
-                        trailing = "min", keyboard = KeyboardType.Number,
-                    )
                 }
             }
 
-            /* 5. Location Intelligence */
+            /* 4. Location Intelligence */
             item {
                 AccordionSection(
                     index = 4, title = "Location Intelligence",
@@ -482,26 +486,43 @@ fun NewTaskScreen(
                         leadingIcon = Icons.Filled.LocationOn,
                         leadingTint = Danger, leadingBg = DangerBg,
                         placeholder = "Site address or landmark",
-                        trailing = "▾",
+                    )
+
+                    Spacer(Modifier.height(8.dp))
+                    val statusText = when {
+                        location.trim().length < 4               -> "Type at least 4 characters to locate on map."
+                        geocoding                                -> "Locating address…"
+                        resolvedLat != null && resolvedLng != null -> "Pinned at ${formatLatLng(resolvedLat!!)}, ${formatLatLng(resolvedLng!!)}"
+                        else                                     -> "Couldn't resolve address. Try a more specific query."
+                    }
+                    Text(
+                        statusText,
+                        color = if (resolvedLat != null) Success else InkSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
                     )
 
                     Spacer(Modifier.height(12.dp))
-                    MiniMapPlaceholder()
-
-                    Spacer(Modifier.height(12.dp))
-                    ToggleRow(
-                        title = "Geo-fencing",
-                        subtitle = "Require employee GPS to be on-site to mark complete",
-                        checked = geofenceOn, onChange = { geofenceOn = it },
-                        tint = Danger,
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color(0xFFE8EFFA)),
+                    ) {
+                        com.example.uniwattelektrik.core.platform.OsmMap(
+                            latitude  = resolvedLat,
+                            longitude = resolvedLng,
+                            modifier  = Modifier.fillMaxSize(),
+                        )
+                    }
                 }
             }
 
-            /* 6. Priority & Impact */
+            /* 5. Priority */
             item {
                 AccordionSection(
-                    index = 5, title = "Priority & Impact",
+                    index = 5, title = "Priority",
                     icon = Icons.Filled.Flag,
                     tint = Danger, bg = DangerBg,
                     expandedMap = expanded,
@@ -517,24 +538,12 @@ fun NewTaskScreen(
                     }
 
                     Spacer(Modifier.height(14.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            FieldLabel("Impact level")
-                            DottedSelect(
-                                value = impact, onChange = { impact = it },
-                                options = listOf("Low", "Medium", "High"),
-                                leadingIcon = Icons.Filled.TrendingUp,
-                            )
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            FieldLabel("Risk level")
-                            DottedSelect(
-                                value = risk, onChange = { risk = it },
-                                options = listOf("Low", "Medium", "High"),
-                                leadingIcon = Icons.Filled.Flag,
-                            )
-                        }
-                    }
+                    FieldLabel("Risk level")
+                    DottedSelect(
+                        value = risk, onChange = { risk = it },
+                        options = listOf("Low", "Medium", "High"),
+                        leadingIcon = Icons.Filled.Flag,
+                    )
                 }
             }
 
@@ -549,8 +558,8 @@ fun NewTaskScreen(
                     FieldLabel("Attachments")
                     if (attachments.isNotEmpty()) {
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(attachments) { name ->
-                                MaterialChip(label = name, onRemove = { attachments.remove(name) })
+                            items(attachments) { url ->
+                                AttachmentThumb(url = url, onRemove = { attachments.remove(url) })
                             }
                         }
                         Spacer(Modifier.height(10.dp))
@@ -558,8 +567,9 @@ fun NewTaskScreen(
                     DottedClickable(
                         leadingIcon = Icons.Filled.AttachFile,
                         leadingTint = Success, leadingBg = SuccessBg,
-                        value = "Tap to add file…", muted = true,
-                        onClick = { attachments.add("file_${(attachments.size + 1)}.jpg") },
+                        value = if (uploadingAttachment) "Uploading…" else "Tap to add photo (camera / gallery)",
+                        muted = true,
+                        onClick = { if (!uploadingAttachment) showAttachmentPicker = true },
                     )
 
                     Spacer(Modifier.height(16.dp))
@@ -593,7 +603,7 @@ fun NewTaskScreen(
             /* 8. Notifications */
             item {
                 AccordionSection(
-                    index = 7, title = "Notifications",
+                    index = 6, title = "Notifications",
                     icon = Icons.Filled.Notifications,
                     tint = Brand, bg = Brand50,
                     expandedMap = expanded,
@@ -632,14 +642,33 @@ fun NewTaskScreen(
             onPreview   = { /* TODO: full-screen preview */ },
             onCreate    = {
                 if (canSubmit) {
+                    val dueDateMs: Long? = endDateMs?.let { day ->
+                        day + (endHour * 3600_000L) + (endMinute * 60_000L)
+                    }
+                    val assigneeId = selectedAssignees.firstOrNull()
+                    val assigneeName = employees.firstOrNull { it.id == assigneeId }?.name.orEmpty()
                     workforceVm.addTask(
-                        adminUid = adminUid,
-                        userId   = selectedAssignees.firstOrNull(),
-                        title    = title.trim(),
-                        location = location.trim(),
-                        time     = endTimeStr,
-                        day      = endDayLbl,
-                        priority = priority,
+                        adminUid       = adminUid,
+                        userId         = assigneeId,
+                        title          = title.trim(),
+                        location       = location.trim(),
+                        time           = endTimeStr,
+                        day            = endDayLbl,
+                        priority       = priority,
+                        departmentId   = selectedDeptId.orEmpty(),
+                        departmentName = selectedDept?.name.orEmpty(),
+                        equipmentId    = selectedEquipId.orEmpty(),
+                        equipmentName  = selectedEquip?.name.orEmpty(),
+                        checklist      = checklist.map {
+                            com.example.uniwattelektrik.feature.workforce.data.remote.ChecklistItem(text = it)
+                        },
+                        attachments    = attachments.toList(),
+                        address        = location.trim(),
+                        latitude       = resolvedLat,
+                        longitude      = resolvedLng,
+                        dueDate        = dueDateMs,
+                        ownerAdminName = adminDisplayName,
+                        assigneeName   = assigneeName,
                     )
                     onCreated()
                 }
@@ -703,6 +732,58 @@ fun NewTaskScreen(
                 contentAlignment = Alignment.Center) { TimePicker(state = tps) }
         }
     }
+
+    /* ── Department / Equipment modal selectors ──────────────────── */
+    if (showDeptSheet) {
+        com.example.uniwattelektrik.core.components.ModalSelectSheet(
+            title          = "Select department",
+            items          = departments,
+            selectedId     = selectedDeptId,
+            itemId         = { it.id },
+            itemTitle      = { it.name },
+            searchPlaceholder = "Search departments…",
+            emptyText      = "No departments yet — add one in Inventory ▸ Departments.",
+            onDismiss      = { showDeptSheet = false },
+            onSelect       = { dept ->
+                if (dept.id != selectedDeptId) {
+                    // Reset equipment when department changes
+                    selectedEquipId = null
+                }
+                selectedDeptId = dept.id
+                showDeptSheet  = false
+            },
+        )
+    }
+    if (showEquipSheet) {
+        com.example.uniwattelektrik.core.components.ModalSelectSheet(
+            title          = "Select equipment",
+            items          = equipmentInDept,
+            selectedId     = selectedEquipId,
+            itemId         = { it.id },
+            itemTitle      = { it.name },
+            searchPlaceholder = "Search equipment…",
+            emptyText      = "No equipment in this department.",
+            onDismiss      = { showEquipSheet = false },
+            onSelect       = { eq ->
+                selectedEquipId = eq.id
+                showEquipSheet  = false
+            },
+        )
+    }
+
+    if (showAttachmentPicker) {
+        AttachmentPickerSheet(
+            onDismiss  = { showAttachmentPicker = false },
+            onCamera   = {
+                showAttachmentPicker = false
+                attachmentLauncher.launchCamera()
+            },
+            onGallery  = {
+                showAttachmentPicker = false
+                attachmentLauncher.launchGallery()
+            },
+        )
+    }
 }
 
 /* ─────────────────────────────────────────────────────────────────────── *
@@ -728,7 +809,7 @@ private fun GradientHeader(taskId: String, onBack: () -> Unit) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("New Task", color = Color.White,
                          fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text("ADVANCED · 8 SECTIONS",
+                    Text("ADVANCED · 7 SECTIONS",
                          color = Color(0xCCFFFFFF), fontSize = 11.sp,
                          fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp)
                 }
@@ -1372,6 +1453,20 @@ private fun autoTaskId(): String {
     return "TASK-${seed.toString().padStart(5, '0')}"
 }
 
+private fun formatLatLng(value: Double): String {
+    // 4-decimal-place formatter that works on all KMP targets (no String.format).
+    val rounded = kotlin.math.round(value * 10000.0) / 10000.0
+    val s = rounded.toString()
+    val dot = s.indexOf('.')
+    return if (dot < 0) "$s.0000"
+    else {
+        val frac = s.substring(dot + 1)
+        val padded = if (frac.length >= 4) frac.substring(0, 4)
+                     else frac.padEnd(4, '0')
+        s.substring(0, dot) + "." + padded
+    }
+}
+
 private fun formatHHmm(h: Int, m: Int) =
     h.toString().padStart(2, '0') + ":" + m.toString().padStart(2, '0')
 
@@ -1381,3 +1476,123 @@ private fun formatShortDate(epochMs: Long): String {
                         "Jul","Aug","Sep","Oct","Nov","Dec")
     return "${ldt.dayOfMonth.toString().padStart(2,'0')} ${months[ldt.monthNumber - 1]} ${ldt.year}"
 }
+
+/* ─────────────────────────────────────────────────────────────────────── *
+ *  ATTACHMENTS
+ * ─────────────────────────────────────────────────────────────────────── */
+
+@Composable
+private fun AttachmentThumb(url: String, onRemove: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(72.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Brand50),
+    ) {
+        coil3.compose.AsyncImage(
+            model = url,
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)),
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(4.dp)
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(Color(0xCC000000))
+                .clickable(onClick = onRemove),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Filled.Close, null, tint = Color.White, modifier = Modifier.size(12.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AttachmentPickerSheet(
+    onDismiss: () -> Unit,
+    onCamera:  () -> Unit,
+    onGallery: () -> Unit,
+) {
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color.White,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                "Add attachment",
+                color = InkPrimary,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                "Pick a source for this photo.",
+                color = InkSecondary,
+                fontSize = 13.sp,
+            )
+            Spacer(Modifier.height(4.dp))
+            PickerOption(
+                icon  = Icons.Filled.Schedule, // generic; replace if needed
+                label = "Camera",
+                sub   = "Capture a new photo",
+                tint  = Brand,
+                bg    = Brand50,
+                onClick = onCamera,
+            )
+            PickerOption(
+                icon  = Icons.Filled.AttachFile,
+                label = "Gallery",
+                sub   = "Choose from your photos",
+                tint  = Success,
+                bg    = SuccessBg,
+                onClick = onGallery,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PickerOption(
+    icon: ImageVector,
+    label: String,
+    sub: String,
+    tint: Color,
+    bg: Color,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(InputBg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp).clip(RoundedCornerShape(12.dp)).background(bg),
+            contentAlignment = Alignment.Center,
+        ) { Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp)) }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, color = InkPrimary, fontSize = 14.sp,
+                 fontWeight = FontWeight.SemiBold)
+            Text(sub, color = InkSecondary, fontSize = 12.sp)
+        }
+        Icon(Icons.Filled.ChevronRight, null, tint = InkMuted, modifier = Modifier.size(20.dp))
+    }
+}
+

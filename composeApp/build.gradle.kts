@@ -71,6 +71,11 @@ kotlin {
             implementation(libs.kotlinx.coroutines.playServices)
             implementation(libs.play.services.location)
             implementation(libs.osmdroid.android)
+            // Lightweight xlsx reader (~3 MB, no MethodHandle — works on minSdk 24).
+            implementation("org.dhatim:fastexcel-reader:0.18.4")
+            // Android does NOT ship javax.xml.stream (StAX API) — bundle it so
+            // fastexcel-reader's transitive aalto-xml / stax2-api can resolve.
+            implementation("stax:stax-api:1.0.1")
         }
         iosMain.dependencies {
             // Real Firebase Auth on iOS via the GitLive KMP wrapper. Requires
@@ -112,6 +117,16 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += listOf(
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/license.txt",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+                "META-INF/notice.txt",
+                "META-INF/*.kotlin_module",
+            )
         }
     }
     buildTypes {

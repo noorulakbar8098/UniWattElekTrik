@@ -10,6 +10,7 @@ import com.example.uniwattelektrik.feature.workforce.data.remote.CheckinPing
 import com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeDraft
 import com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeRecord
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
+import com.example.uniwattelektrik.feature.workforce.data.remote.TaskNote
 import com.example.uniwattelektrik.feature.workforce.data.remote.WorkforceDirectory
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -255,13 +256,147 @@ class WorkforceViewModel(
         time: String,
         day: String,
         priority: String,
+        departmentId: String = "",
+        departmentName: String = "",
+        equipmentId: String = "",
+        equipmentName: String = "",
+        checklist: List<com.example.uniwattelektrik.feature.workforce.data.remote.ChecklistItem> = emptyList(),
+        attachments: List<String> = emptyList(),
+        address: String = "",
+        latitude: Double? = null,
+        longitude: Double? = null,
+        dueDate: Long? = null,
+        ownerAdminName: String = "",
+        assigneeName: String = "",
     ) {
         viewModelScope.launch {
             runCatching {
-                directory.addTask(adminUid, userId, title, location, time, day, priority)
+                directory.addTask(
+                    adminUid, userId, title, location, time, day, priority,
+                    departmentId, departmentName, equipmentId, equipmentName,
+                    checklist, attachments, address, latitude, longitude,
+                    dueDate, ownerAdminName, assigneeName,
+                )
             }.onFailure { _error.value = it.message }
         }
     }
 
+    /** Mark a task as accepted by the assigned user — flips status to InProgress. */
+    fun acceptTask(taskId: String, lat: Double? = null, lon: Double? = null) {
+        viewModelScope.launch {
+            runCatching { directory.acceptTask(taskId, lat, lon) }
+                .onFailure {
+                    AppLog.w("WorkforceVM", "acceptTask failed: ${it.message}")
+                    _error.value = it.message
+                }
+        }
+    }
+
+    /** Mark a task as completed (status="Done"). Decrements assignee's tasksOpen. */
+    fun completeTask(adminUid: String, taskId: String, assignedUserId: String?) {
+        viewModelScope.launch {
+            runCatching { directory.updateTaskStatus(adminUid, taskId, assignedUserId, "Done") }
+                .onFailure {
+                    AppLog.w("WorkforceVM", "completeTask failed: ${it.message}")
+                    _error.value = it.message
+                }
+        }
+    }
+
+    // ─── Task notes (chat) ───────────────────────────────────────────────────
+
+    private val noteFlows = mutableMapOf<String, MutableStateFlow<List<TaskNote>>>()
+    private val noteJobs  = mutableMapOf<String, Job>()
+
+    /** Returns a hot StateFlow of notes for [taskId]. Subscribes lazily. */
+    fun observeTaskNotes(taskId: String): StateFlow<List<TaskNote>> {
+        val existing = noteFlows[taskId]
+        if (existing != null) return existing.asStateFlow()
+        val flow = MutableStateFlow<List<TaskNote>>(emptyList())
+        noteFlows[taskId] = flow
+        noteJobs[taskId] = directory.observeTaskNotes(taskId)
+            .onEach { flow.value = it }
+            .catch { AppLog.w("WorkforceVM", "observeTaskNotes($taskId) failed: ${it.message}") }
+            .launchIn(viewModelScope)
+        return flow.asStateFlow()
+    }
+
+    fun addTaskNote(
+        taskId: String,
+        authorId: String,
+        authorName: String,
+        role: String,
+        message: String,
+    ) {
+        if (message.isBlank()) return
+        viewModelScope.launch {
+            runCatching {
+                directory.addTaskNote(taskId, authorId, authorName, role, message.trim())
+            }.onFailure {
+                AppLog.w("WorkforceVM", "addTaskNote failed: ${it.message}")
+                _error.value = it.message
+            }
+        }
+    }
+
+    /** Toggle a checklist item on the given task and persist (live listener will re-emit). */
+    fun toggleChecklistItem(taskId: String, index: Int, done: Boolean) {
+        viewModelScope.launch {
+            runCatching { directory.setChecklistItemDone(taskId, index, done) }
+                .onFailure { _error.value = it.message }
+        }
+    }
+
+    /**
+     * Upload a single picked image (content://… URI) to Firebase Storage and
+     * return its download URL via [onDone]. Used by the New Task screen so
+     * attachments are persistable as plain URL strings on the TaskRecord.
+     */
+    fun uploadAttachment(
+        adminId: String,
+        contentUri: String,
+        onDone: (Result<String>) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            val result = runCatching { directory.uploadTaskAttachment(adminId, contentUri) }
+            result.onFailure {
+                AppLog.w("WorkforceVM", "uploadAttachment failed: ${it.message}")
+                _error.value = it.message
+            }
+            onDone(result)
+        }
+    }
+
+    /** Replace the attachments list on an existing task. */
+    fun updateAttachments(taskId: String, urls: List<String>) {
+        viewModelScope.launch {
+            runCatching { directory.updateTaskAttachments(taskId, urls) }
+                .onFailure { _error.value = it.message }
+        }
+    }
+
     fun clearError() { _error.value = null }
+
+    // ─── Danger zone ─────────────────────────────────────────────────────────
+
+    private val _deleteAllState = MutableStateFlow<DeleteAllState>(DeleteAllState.Idle)
+    val deleteAllState: StateFlow<DeleteAllState> = _deleteAllState.asStateFlow()
+
+    fun deleteAllData(adminId: String) {
+        viewModelScope.launch {
+            _deleteAllState.value = DeleteAllState.Loading
+            runCatching { directory.deleteAllData(adminId) }
+                .onSuccess { _deleteAllState.value = DeleteAllState.Success }
+                .onFailure { _deleteAllState.value = DeleteAllState.Error(it.message ?: "Delete failed") }
+        }
+    }
+
+    fun clearDeleteAllState() { _deleteAllState.value = DeleteAllState.Idle }
+}
+
+sealed interface DeleteAllState {
+    data object Idle    : DeleteAllState
+    data object Loading : DeleteAllState
+    data object Success : DeleteAllState
+    data class  Error(val message: String) : DeleteAllState
 }

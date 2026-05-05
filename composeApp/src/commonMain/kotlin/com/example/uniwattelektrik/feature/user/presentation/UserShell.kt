@@ -12,9 +12,13 @@ import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.uniwattelektrik.core.components.ScreenSkeletonOverlay
+import com.example.uniwattelektrik.core.components.SkeletonType
 import com.example.uniwattelektrik.di.AppContainer
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
 import com.example.uniwattelektrik.core.components.AppBottomNavBar
@@ -46,6 +50,7 @@ fun UserShell(
     LaunchedEffect(user.id, user.parentAdminId) {
         workforceVm.loadForUser(user.id, adminUid = user.parentAdminId)
     }
+    val workforceLoading by workforceVm.loading.collectAsStateWithLifecycle()
 
     val tabs = remember {
         listOf(
@@ -94,6 +99,10 @@ fun UserShell(
                 onBack      = { nav.pop() },
                 onStartWork = { id -> nav.navigate(UserRoute.WorkCompletion(id)) },
                 workforceVm = workforceVm,
+                viewerRole      = com.example.uniwattelektrik.feature.user.presentation.screens.TaskDetailRole.User,
+                currentUserId   = user.id,
+                currentUserName = user.displayName?.takeIf { it.isNotBlank() } ?: user.email,
+                adminUid        = user.parentAdminId ?: "",
             )
             is UserRoute.WorkCompletion -> CompleteWorkScreen(
                 taskId      = r.taskId,
@@ -125,6 +134,15 @@ fun UserShell(
                 onFabClick  = { /* TODO: quick check-in / new task */ },
                 modifier    = Modifier.align(Alignment.BottomCenter),
             )
+        }
+
+        if (workforceLoading) {
+            val skeletonType = when (current) {
+                UserRoute.Home -> SkeletonType.Dashboard
+                is UserRoute.WorkCompletion -> SkeletonType.Form
+                else -> SkeletonType.List
+            }
+            ScreenSkeletonOverlay(type = skeletonType, message = "Loading workspace...")
         }
     }
 }

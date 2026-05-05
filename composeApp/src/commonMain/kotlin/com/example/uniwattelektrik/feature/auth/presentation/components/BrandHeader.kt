@@ -30,7 +30,7 @@ fun BrandHeader(modifier: Modifier = Modifier) {
             painter = painterResource(Res.drawable.app_logo3),
             contentDescription = "UniWatt ElekTrik logo",
             contentScale = ContentScale.Fit,
-            modifier = Modifier.size(220.dp),
+            modifier = Modifier.size(130.dp),
         )
         Text(
             "WORKFORCE  MANAGEMENT",

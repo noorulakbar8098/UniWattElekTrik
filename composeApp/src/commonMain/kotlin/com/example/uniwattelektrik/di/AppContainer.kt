@@ -19,6 +19,8 @@ import com.example.uniwattelektrik.feature.workforce.data.remote.WorkforceDirect
 import com.example.uniwattelektrik.feature.workforce.data.remote.WorkforceDirectoryFactory
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
 import com.example.uniwattelektrik.feature.auth.presentation.viewmodel.PasswordResetViewModel
+import com.example.uniwattelektrik.feature.admin.presentation.InventoryViewModel
+import com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItemSeeder
 import com.example.uniwattelektrik.platform.LinkLauncher
 import com.example.uniwattelektrik.platform.SessionStorage
 
@@ -78,6 +80,11 @@ object AppContainer {
             employeeAuthClient = employeeAuthClient,
         )
 
+    fun createInventoryViewModel(): InventoryViewModel =
+        InventoryViewModel(
+            directory = workforceDirectory,
+        )
+
     /** Drives the "Create New Password" sheet on the user login screen. */
     fun createPasswordResetViewModel(): PasswordResetViewModel =
         PasswordResetViewModel(
@@ -88,5 +95,13 @@ object AppContainer {
 
     suspend fun bootstrap() {
         authRepositoryImpl.bootstrap()
+    }
+
+    /**
+     * Seed sample spare items into Firestore for this admin if their inventory
+     * is empty. Safe to call repeatedly — no-ops once data exists.
+     */
+    suspend fun seedAdminInventoryIfNeeded(adminId: String) {
+        SpareItemSeeder.seedInventoryIfNeeded(adminId, workforceDirectory)
     }
 }

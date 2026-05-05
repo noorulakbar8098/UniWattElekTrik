@@ -10,6 +10,8 @@ import com.example.uniwattelektrik.feature.auth.domain.usecase.SignInUseCase
 import com.example.uniwattelektrik.feature.auth.domain.usecase.SignUpUseCase
 import com.example.uniwattelektrik.feature.auth.presentation.state.AuthUiEvent
 import com.example.uniwattelektrik.feature.auth.presentation.state.AuthUiState
+import com.example.uniwattelektrik.platform.nowEpochMillis
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -54,6 +56,9 @@ class AuthViewModel(
     private val _keepSignedIn = MutableStateFlow(true)
     val keepSignedIn: StateFlow<Boolean> = _keepSignedIn.asStateFlow()
 
+    private val _loadingMessage = MutableStateFlow("Please wait...")
+    val loadingMessage: StateFlow<String> = _loadingMessage.asStateFlow()
+
     // Last user intent — enables `Retry` semantics.
     private var lastIntent: AuthUiEvent? = null
 
@@ -97,11 +102,7 @@ class AuthViewModel(
             AuthUiEvent.DismissError              -> (_state.value as? AuthUiState.Error)?.let {
                 _state.value = it.previous
             }
-            AuthUiEvent.Logout                    -> viewModelScope.launch {
-                logoutUseCase()
-                clearForm()
-                _state.value = AuthUiState.Idle
-            }
+            AuthUiEvent.Logout                    -> performLogout()
         }
     }
 
@@ -117,12 +118,16 @@ class AuthViewModel(
         val previous = _state.value
         val email = _email.value
         val pwd = _password.value
+        val startedAt = nowEpochMillis()
+        _loadingMessage.value = if (asAdmin) "Signing in as admin..." else "Signing in..."
         _state.value = AuthUiState.Loading
         viewModelScope.launch {
-            _state.value = when (val result = signIn(email, pwd, asAdmin = asAdmin)) {
+            val nextState = when (val result = signIn(email, pwd, asAdmin = asAdmin)) {
                 is Resource.Success -> AuthUiState.Verified(result.data.user)
                 is Resource.Failure -> AuthUiState.Error(result.error.message, previous)
             }
+            holdLoadingForMinimum(startedAt)
+            _state.value = nextState
         }
     }
 
@@ -132,11 +137,13 @@ class AuthViewModel(
         val email = _email.value
         val pwd = _password.value
         val confirm = _confirmPassword.value
+        val startedAt = nowEpochMillis()
         AppLog.i("SignUp", "▶ start  email=$email name='$name' pwdLen=${pwd.length} confirmLen=${confirm.length}")
+        _loadingMessage.value = "Creating account..."
         _state.value = AuthUiState.Loading
         viewModelScope.launch {
             val result = signUp(name, email, pwd, confirm)
-            _state.value = when (result) {
+            val nextState = when (result) {
                 is Resource.Success -> {
                     val u = result.data.user
                     AppLog.i("SignUp", "✅ success uid=${u.id} adminId=${u.adminId} email=${u.email}")
@@ -147,6 +154,32 @@ class AuthViewModel(
                     AuthUiState.Error(result.error.message, previous)
                 }
             }
+            holdLoadingForMinimum(startedAt)
+            _state.value = nextState
         }
+    }
+
+    private fun performLogout() {
+        val previous = _state.value
+        _loadingMessage.value = "Signing out..."
+        _state.value = AuthUiState.Loading
+        viewModelScope.launch {
+            val startedAt = nowEpochMillis()
+            val result = runCatching { logoutUseCase() }
+            holdLoadingForMinimum(startedAt)
+            result
+                .onSuccess {
+                    clearForm()
+                    _state.value = AuthUiState.Idle
+                }
+                .onFailure {
+                    _state.value = AuthUiState.Error(it.message ?: "Sign out failed", previous)
+                }
+        }
+    }
+
+    private suspend fun holdLoadingForMinimum(startedAt: Long, minDurationMs: Long = 800L) {
+        val elapsed = nowEpochMillis() - startedAt
+        if (elapsed < minDurationMs) delay(minDurationMs - elapsed)
     }
 }

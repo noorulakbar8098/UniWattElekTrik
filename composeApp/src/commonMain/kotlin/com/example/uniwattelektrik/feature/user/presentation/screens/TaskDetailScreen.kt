@@ -46,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,8 +65,12 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.uniwattelektrik.core.components.EmptyState
 import com.example.uniwattelektrik.core.sample.SampleTasks
+import com.example.uniwattelektrik.feature.workforce.data.remote.TaskNote
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
+import com.example.uniwattelektrik.platform.LocationProvider
+import kotlinx.coroutines.launch
+import kotlinx.datetime.toLocalDateTime
 import kotlin.math.absoluteValue
 
 /* ── Design tokens — matched 1:1 with AdminEmployeeDetailScreen ────────── */
@@ -88,6 +93,9 @@ private val Purple       = Color(0xFF8B5CF6)
 private val ShadowSoft   = Color(0x14172C50)
 private val DividerSoft  = Color(0xFFE2E8F0)
 
+/** Distinguishes Admin vs User viewers — drives which actions are visible. */
+enum class TaskDetailRole { Admin, User }
+
 /**
  * Premium task detail screen — visual structure matches
  * [com.example.uniwattelektrik.feature.admin.presentation.screens.AdminEmployeeDetailScreen]
@@ -100,6 +108,10 @@ fun TaskDetailScreen(
     onStartWork: (taskId: String) -> Unit,
     modifier: Modifier = Modifier,
     workforceVm: WorkforceViewModel? = null,
+    viewerRole: TaskDetailRole = TaskDetailRole.User,
+    currentUserId: String = "",
+    currentUserName: String = "",
+    adminUid: String = "",
 ) {
     val liveTasks by (workforceVm?.tasks?.collectAsStateWithLifecycle()
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<TaskRecord>()) }
@@ -116,24 +128,20 @@ fun TaskDetailScreen(
         return
     }
 
-    val checklist = remember {
-        mutableStateListOf(
-            ChecklistItem("Inspect transformer", true),
-            ChecklistItem("Replace fuse", true),
-            ChecklistItem("Test output voltage", false),
-            ChecklistItem("Submit completion report", false),
-        )
-    }
-    val notes = remember {
-        mutableStateListOf(
-            NoteItem("Priya S.", "PS", Purple, "10:42 AM",
-                "Confirmed the fault location. Bringing replacement gaskets."),
-            NoteItem("Ravi K.", "RK", Color(0xFFEC8552), "10:55 AM",
-                "On site. Power isolated. Starting inspection."),
-        )
-    }
+    val checklist = live?.checklist ?: emptyList()
+    val attachmentUrls = live?.attachments ?: emptyList()
+    var fullscreenAttachment by remember { mutableStateOf<String?>(null) }
+
+    // Live notes from Firestore subcollection.
+    val notesFlow = remember(taskId, workforceVm) { workforceVm?.observeTaskNotes(taskId) }
+    val liveNotes by (notesFlow?.collectAsStateWithLifecycle()
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<TaskNote>()) }
+            .collectAsStateWithLifecycle())
     var newNote by remember { mutableStateOf("") }
     var descExpanded by remember { mutableStateOf(false) }
+
+    val scope = rememberCoroutineScope()
+    val locationProvider = remember { LocationProvider() }
 
     LazyColumn(
         modifier = modifier.fillMaxSize().background(appScreenBackground()),
@@ -141,7 +149,7 @@ fun TaskDetailScreen(
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         // Gradient header
-        item { TaskHeader(task = task, onBack = onBack) }
+        item { TaskHeader(task = task, ownerName = live?.ownerAdminName.orEmpty(), onBack = onBack) }
 
         // Floating stats card (overlaps header)
         item {
@@ -150,7 +158,7 @@ fun TaskDetailScreen(
                     .padding(horizontal = 16.dp)
                     .offset(y = (-32).dp),
             ) {
-                StatsCard(task = task)
+                StatsCard(task = task, ownerLabel = live?.ownerAdminName.orEmpty().initialsOrFallback(task.assigneeInitials))
             }
         }
 
@@ -183,40 +191,50 @@ fun TaskDetailScreen(
             Spacer(Modifier.height(16.dp))
         }
 
-        // Activity timeline card
+        // Activity timeline card — built from live TaskRecord timestamps.
         item {
             Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                 SectionCard(title = "Activity") {
                     Spacer(Modifier.height(4.dp))
-                    TimelineRow(
-                        tint = InkMuted, time = "Yesterday · 17:42",
-                        title = "Task created",
-                        note = "Created by Operations Admin",
-                        isFirst = true, isLast = false,
-                    )
-                    TimelineRow(
-                        tint = Brand, time = "Today · 09:10",
-                        title = "Assigned to ${task.assigneeInitials}",
-                        note = "Auto-assigned by load balance",
-                        isFirst = false, isLast = false,
-                    )
-                    TimelineRow(
-                        tint = Warning, time = "Today · 10:30",
-                        title = "In progress",
-                        note = "Marked on-site, geo-fence verified",
-                        isFirst = false, isLast = false,
-                        active = true,
-                    )
-                    TimelineRow(
-                        tint = InkMuted, time = "—",
-                        title = "Completion",
-                        note = "Awaiting field sign-off",
-                        isFirst = false, isLast = true,
-                        faded = true,
-                    )
+                    val rows = buildActivityRows(live)
+                    if (rows.isEmpty()) {
+                        Text("No activity yet.",
+                            color = InkSecondary, fontSize = 13.sp)
+                    } else {
+                        rows.forEachIndexed { idx, row ->
+                            TimelineRow(
+                                tint    = row.tint,
+                                time    = row.time,
+                                title   = row.title,
+                                note    = row.note,
+                                isFirst = idx == 0,
+                                isLast  = idx == rows.lastIndex,
+                                active  = row.active,
+                                faded   = row.faded,
+                            )
+                        }
+                    }
                 }
             }
             Spacer(Modifier.height(16.dp))
+        }
+
+        // Material Details card (department + equipment)
+        if (live != null && (live.departmentName.isNotBlank() || live.equipmentName.isNotBlank())) {
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    SectionCard(title = "Material Details") {
+                        if (live.departmentName.isNotBlank()) {
+                            MaterialRow(label = "Department", value = live.departmentName)
+                        }
+                        if (live.equipmentName.isNotBlank()) {
+                            if (live.departmentName.isNotBlank()) Spacer(Modifier.height(8.dp))
+                            MaterialRow(label = "Equipment", value = live.equipmentName)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+            }
         }
 
         // Checklist card
@@ -224,14 +242,24 @@ fun TaskDetailScreen(
             Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                 SectionCard(
                     title = "Checklist",
-                    trailingAction = "${checklist.count { it.done }} / ${checklist.size}",
+                    trailingAction = if (checklist.isEmpty()) null
+                                     else "${checklist.count { it.done }} / ${checklist.size}",
                 ) {
-                    checklist.forEachIndexed { i, item ->
-                        ChecklistRow(
-                            item = item,
-                            onToggle = { checklist[i] = item.copy(done = !item.done) },
+                    if (checklist.isEmpty()) {
+                        Text(
+                            "No checklist items.",
+                            color = InkSecondary, fontSize = 13.sp,
                         )
-                        if (i != checklist.lastIndex) Spacer(Modifier.height(4.dp))
+                    } else {
+                        checklist.forEachIndexed { i, item ->
+                            ChecklistRow(
+                                item = ChecklistItem(item.text, item.done),
+                                onToggle = {
+                                    workforceVm?.toggleChecklistItem(taskId, i, !item.done)
+                                },
+                            )
+                            if (i != checklist.lastIndex) Spacer(Modifier.height(4.dp))
+                        }
                     }
                 }
             }
@@ -241,30 +269,62 @@ fun TaskDetailScreen(
         // Attachments card
         item {
             Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                SectionCard(title = "Attachments", trailingAction = "3 files") {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        AttachmentTile(tint = Color(0xFF8FB3FF), modifier = Modifier.weight(1f))
-                        AttachmentTile(tint = Color(0xFFFFB28A), modifier = Modifier.weight(1f))
-                        AttachmentTile(tint = Color(0xFF86EFAC), modifier = Modifier.weight(1f))
+                SectionCard(
+                    title = "Attachments",
+                    trailingAction = if (attachmentUrls.isEmpty()) null
+                                     else "${attachmentUrls.size} ${if (attachmentUrls.size == 1) "file" else "files"}",
+                ) {
+                    if (attachmentUrls.isEmpty()) {
+                        Text(
+                            "No attachments yet.",
+                            color = InkSecondary, fontSize = 13.sp,
+                        )
+                    } else {
+                        AttachmentsGrid(
+                            urls = attachmentUrls,
+                            onClick = { fullscreenAttachment = it },
+                        )
                     }
                 }
             }
             Spacer(Modifier.height(16.dp))
         }
 
-        // Notes card
+        // Notes card — live chat between admin & assigned user.
         item {
             Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                 SectionCard(title = "Notes") {
                     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        notes.forEach { NoteRow(it) }
+                        if (liveNotes.isEmpty()) {
+                            Text(
+                                "No notes yet. Start the conversation below.",
+                                color = InkSecondary, fontSize = 13.sp,
+                            )
+                        } else {
+                            liveNotes.forEach { n ->
+                                NoteRow(
+                                    NoteItem(
+                                        author    = n.authorName.ifBlank { "—" },
+                                        initials  = noteInitials(n.authorName),
+                                        tint      = if (n.role == "admin") Brand else Purple,
+                                        timestamp = formatNoteTime(n.createdAtMs),
+                                        message   = n.message,
+                                    )
+                                )
+                            }
+                        }
                         ComposerRow(
                             value = newNote,
                             onChange = { newNote = it },
                             onSend = {
-                                if (newNote.isNotBlank()) {
-                                    notes.add(
-                                        NoteItem("You", "YO", Brand, "Now", newNote.trim()),
+                                val msg = newNote.trim()
+                                if (msg.isNotBlank() && workforceVm != null && currentUserId.isNotBlank()) {
+                                    workforceVm.addTaskNote(
+                                        taskId     = taskId,
+                                        authorId   = currentUserId,
+                                        authorName = currentUserName.ifBlank { "—" },
+                                        role       = if (viewerRole == TaskDetailRole.Admin) "admin" else "user",
+                                        message    = msg,
                                     )
                                     newNote = ""
                                 }
@@ -336,32 +396,57 @@ fun TaskDetailScreen(
             Spacer(Modifier.height(20.dp))
         }
 
-        // Bottom action row (3 cards)
-        item {
-            Row(
-                modifier = Modifier
-                    .padding(horizontal = 16.dp)
-                    .fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                BottomAction(
-                    icon = Icons.Filled.Add, label = "Add Note",
-                    tint = Brand, bg = Brand50,
-                    modifier = Modifier.weight(1f),
-                )
-                BottomAction(
-                    icon = Icons.Filled.Edit, label = "Update",
-                    tint = Warning, bg = WarningBg,
-                    modifier = Modifier.weight(1f),
-                )
-                BottomAction(
-                    icon = Icons.Filled.Check, label = "Complete",
-                    tint = Success, bg = SuccessBg,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onStartWork(task.id) },
-                )
+        // Bottom action row — User-only. Admin sees no action buttons here.
+        if (viewerRole == TaskDetailRole.User && live != null) {
+            item {
+                val isTodo       = live.status == "Todo"
+                val isInProgress = live.status == "InProgress"
+                val isDone       = live.status == "Done"
+                Row(
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp)
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    if (isTodo) {
+                        BottomAction(
+                            icon = Icons.Filled.Check, label = "Accept",
+                            tint = Brand, bg = Brand50,
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                scope.launch {
+                                    val loc = runCatching { locationProvider.getCurrentLocation() }.getOrNull()
+                                    workforceVm?.acceptTask(
+                                        taskId = live.id,
+                                        lat    = loc?.latitude,
+                                        lon    = loc?.longitude,
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    if (isInProgress) {
+                        BottomAction(
+                            icon = Icons.Filled.Check, label = "Complete",
+                            tint = Success, bg = SuccessBg,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onStartWork(live.id) },
+                        )
+                    }
+                    if (isDone) {
+                        BottomAction(
+                            icon = Icons.Filled.Check, label = "Completed",
+                            tint = Success, bg = SuccessBg,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
             }
         }
+    }
+
+    fullscreenAttachment?.let { url ->
+        AttachmentFullscreenDialog(url = url, onDismiss = { fullscreenAttachment = null })
     }
 }
 
@@ -372,6 +457,7 @@ fun TaskDetailScreen(
 @Composable
 private fun TaskHeader(
     task: com.example.uniwattelektrik.core.sample.SampleTask,
+    ownerName: String,
     onBack: () -> Unit,
 ) {
     com.example.uniwattelektrik.core.components.PremiumHeaderBackground(
@@ -401,23 +487,6 @@ private fun TaskHeader(
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(20.dp),
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .shadow(8.dp, RoundedCornerShape(14.dp), spotColor = Color(0x33000000))
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color.White)
-                        .clickable {},
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Edit,
-                        contentDescription = null,
-                        tint = Brand,
-                        modifier = Modifier.size(18.dp),
                     )
                 }
             }
@@ -477,6 +546,17 @@ private fun TaskHeader(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (ownerName.isNotBlank()) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "Owner · $ownerName",
+                            color = Color.White.copy(alpha = 0.80f),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
 
                     Spacer(Modifier.height(10.dp))
                     Row(
@@ -531,7 +611,7 @@ private fun GlassButton(onClick: () -> Unit, content: @Composable () -> Unit) {
  * ─────────────────────────────────────────────────────────────────────── */
 
 @Composable
-private fun StatsCard(task: com.example.uniwattelektrik.core.sample.SampleTask) {
+private fun StatsCard(task: com.example.uniwattelektrik.core.sample.SampleTask, ownerLabel: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -548,15 +628,21 @@ private fun StatsCard(task: com.example.uniwattelektrik.core.sample.SampleTask) 
             modifier = Modifier.weight(1f),
         )
         VerticalDivider()
-        StatItem(value = "42m", label = "SLA",
-                 valueColor = Warning, modifier = Modifier.weight(1f))
-        VerticalDivider()
         StatItem(value = task.time, label = "DUE",
                  valueColor = InkPrimary, modifier = Modifier.weight(1f))
         VerticalDivider()
-        StatItem(value = task.assigneeInitials.uppercase(), label = "OWNER",
+        StatItem(value = ownerLabel.ifBlank { "—" }, label = "OWNER",
                  valueColor = InkPrimary, modifier = Modifier.weight(1f))
     }
+}
+
+/** Returns initials for [this] (first letter of up to 2 words). Falls back to [fallback] when blank. */
+private fun String.initialsOrFallback(fallback: String): String {
+    val parts = trim().split(" ", "_", ".", "-").filter { it.isNotBlank() }
+    val initials = parts.take(2)
+        .mapNotNull { it.firstOrNull()?.uppercaseChar() }
+        .joinToString("")
+    return initials.ifBlank { fallback.ifBlank { "—" } }
 }
 
 @Composable
@@ -896,7 +982,7 @@ private fun sampleFromRecord(t: TaskRecord): com.example.uniwattelektrik.core.sa
     return com.example.uniwattelektrik.core.sample.SampleTask(
         id = code,
         title = t.title,
-        description = "Site work scheduled at ${t.location}. Follow standard SLA policy.",
+        description = "Site work scheduled at ${t.location}. Follow service schedule.",
         location = t.location.ifBlank { "—" },
         distanceKm = 0.0,
         time = t.time,
@@ -914,8 +1000,190 @@ private fun statusColor(status: String): Color = when (status.lowercase()) {
     else                      -> Brand
 }
 
+/* ─── Activity timeline builder ────────────────────────────────────────── */
+
+private data class ActivityRow(
+    val tint: Color,
+    val time: String,
+    val title: String,
+    val note: String,
+    val active: Boolean = false,
+    val faded: Boolean = false,
+)
+
+private fun buildActivityRows(t: TaskRecord?): List<ActivityRow> {
+    if (t == null) return emptyList()
+    val rows = mutableListOf<ActivityRow>()
+
+    // 1. Created
+    rows += ActivityRow(
+        tint  = InkMuted,
+        time  = formatActivityTime(t.createdAtMs),
+        title = "Task created",
+        note  = if (t.ownerAdminName.isNotBlank()) "Created by ${t.ownerAdminName}" else "Created",
+    )
+
+    // 2. Assigned (always shown if a user is set)
+    if (!t.userId.isNullOrBlank()) {
+        rows += ActivityRow(
+            tint  = Brand,
+            time  = formatActivityTime(t.createdAtMs),
+            title = "Assigned to ${t.assigneeName.ifBlank { t.assigneeInitials.ifBlank { "user" } }}",
+            note  = "Awaiting acceptance from the assigned user",
+        )
+    }
+
+    // 3. In progress (when accepted)
+    val accepted = t.acceptedAt
+    if (accepted != null && accepted > 0L) {
+        val coords = if (t.acceptedLat != null && t.acceptedLon != null)
+            "Location · ${formatLatLng4(t.acceptedLat)}, ${formatLatLng4(t.acceptedLon)}"
+        else "Location not captured"
+        rows += ActivityRow(
+            tint  = Warning,
+            time  = formatActivityTime(accepted),
+            title = "In progress",
+            note  = coords,
+            active = t.status == "InProgress",
+        )
+    }
+
+    // 4. Completion
+    val done = t.completedAt
+    if (done != null && done > 0L) {
+        rows += ActivityRow(
+            tint  = Success,
+            time  = formatActivityTime(done),
+            title = "Completed",
+            note  = "Marked done by the assigned user",
+        )
+    } else {
+        rows += ActivityRow(
+            tint  = InkMuted,
+            time  = "—",
+            title = "Completion",
+            note  = "Awaiting field sign-off",
+            faded = true,
+        )
+    }
+    return rows
+}
+
+private fun formatActivityTime(ms: Long?): String {
+    if (ms == null || ms <= 0L) return "—"
+    val ldt = kotlinx.datetime.Instant.fromEpochMilliseconds(ms)
+        .toLocalDateTime(kotlinx.datetime.TimeZone.currentSystemDefault())
+    val months = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+    val day = ldt.dayOfMonth.toString().padStart(2, '0')
+    val mon = months[ldt.monthNumber - 1]
+    val hh  = ldt.hour.toString().padStart(2, '0')
+    val mm  = ldt.minute.toString().padStart(2, '0')
+    return "$day $mon · $hh:$mm"
+}
+
+private fun formatNoteTime(ms: Long?): String = formatActivityTime(ms)
+
+private fun noteInitials(name: String): String {
+    val parts = name.trim().split(" ", "_", ".", "-").filter { it.isNotBlank() }
+    val initials = parts.take(2).mapNotNull { it.firstOrNull()?.uppercaseChar() }.joinToString("")
+    return initials.ifBlank { "??" }
+}
+
+private fun formatLatLng4(value: Double): String {
+    val rounded = kotlin.math.round(value * 10000.0) / 10000.0
+    val s = rounded.toString()
+    val dot = s.indexOf('.')
+    return if (dot < 0) "$s.0000"
+    else {
+        val frac = s.substring(dot + 1)
+        val padded = if (frac.length >= 4) frac.substring(0, 4) else frac.padEnd(4, '0')
+        s.substring(0, dot) + "." + padded
+    }
+}
+
 private fun priorityIconGradient(priority: String): List<Color> = when (priority.lowercase()) {
     "high"   -> listOf(Color(0xFFFB7185), Danger)
     "low"    -> listOf(Color(0xFF34D399), Success)
     else     -> listOf(Color(0xFFFBBF24), Warning)   // medium
+}
+
+/* ─────────────────────────────────────────────────────────────────────── *
+ *  MATERIAL DETAILS + ATTACHMENTS (live data)
+ * ─────────────────────────────────────────────────────────────────────── */
+
+@Composable
+private fun MaterialRow(label: String, value: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(32.dp).clip(RoundedCornerShape(10.dp)).background(Brand50),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("●", color = Brand, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label.uppercase(), color = InkSecondary, fontSize = 10.sp,
+                 fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp)
+            Spacer(Modifier.height(2.dp))
+            Text(value, color = InkPrimary, fontSize = 14.sp,
+                 fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+private fun AttachmentsGrid(urls: List<String>, onClick: (String) -> Unit) {
+    // Simple wrap into rows of 3
+    val rows = urls.chunked(3)
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        rows.forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                row.forEach { url ->
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(82.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Brand50)
+                            .clickable { onClick(url) },
+                    ) {
+                        coil3.compose.AsyncImage(
+                            model = url,
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        )
+                    }
+                }
+                // Pad remaining cells so the row aligns
+                repeat(3 - row.size) {
+                    Box(modifier = Modifier.weight(1f).height(82.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AttachmentFullscreenDialog(url: String, onDismiss: () -> Unit) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xEE000000))
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center,
+        ) {
+            coil3.compose.AsyncImage(
+                model = url,
+                contentDescription = null,
+                modifier = Modifier.fillMaxWidth(),
+                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+            )
+        }
+    }
 }

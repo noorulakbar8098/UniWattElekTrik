@@ -3,50 +3,52 @@ package com.example.uniwattelektrik.feature.workforce.data.remote
 import kotlinx.coroutines.flow.Flow
 
 /**
- * Firestore-backed workforce data scoped by [adminId] (per-admin subcollections).
+ * Firestore-backed workforce data using **flat top-level collections**.
  *
  * Layout:
- *   /admins/{adminId}/users/{userId}
- *   /admins/{adminId}/tasks/{taskId}
- *   /admins/{adminId}/inventory/{itemId}
+ *   /admins/{adminId}
+ *   /users/{userId}                   — adminId field for tenant isolation
+ *   /tasks/{taskId}                   — adminId + assignedUserId fields
+ *   /attendance_logs/{attendanceId}   — adminId + userId fields
+ *   /inventory_items/{itemId}         — adminId field
+ *   /inventory_transactions/{txnId}   — adminId + userId fields
+ *   /checkins/{checkinId}             — adminId + userId fields
+ *   /notifications/{notificationId}   — adminId + userId fields
+ *   /spare_items/{itemId}             — adminId field
+ *   /departments/{deptId}             — adminId field
+ *   /equipment/{equipmentId}          — adminId + departmentId fields
+ *   /employee_map/{uid}               — auth lookup (unchanged)
+ *   /admin_ids/{code}                 — auth lookup (unchanged)
  *
- * Reads are exposed as **hot Flows** (Firestore snapshot listeners) so the UI
- * refreshes the moment a doc changes — no manual re-fetch needed. Writes are
+ * Reads are exposed as hot Flows (Firestore snapshot listeners). Writes are
  * suspend functions returning the canonical record.
  */
 interface WorkforceDirectory {
 
-    // ─── Employees (admin-managed users) ────────────────────────────────────
-    /** Live stream of all employees in this admin's subcollection. */
+    // ─── Employees ───────────────────────────────────────────────────────────
+
+    /** Live stream of all active employees for this admin. */
     fun observeEmployees(adminId: String): Flow<List<EmployeeRecord>>
 
-    /**
-     * Persists a new employee at `admins/{adminId}/users/{uid}`.
-     *
-     * [uid] is the Firebase Auth UID returned by [com.example.uniwattelektrik.feature.auth.data.remote.EmployeeAuthClient.createEmployee].
-     * Using it as the doc ID lets the employee resolve their own profile via
-     * a collection-group query at sign-in time.
-     */
+    /** Persists a new employee at `users/{uid}`. Doc ID = Firebase Auth UID. */
     suspend fun addEmployee(
         adminId: String,
         uid: String,
         draft: EmployeeDraft,
     ): EmployeeRecord
 
-    /**
-     * Flips `mustChangePassword → false` on the employee's doc once they've
-     * rotated their initial admin-given password.
-     */
+    /** Flips `mustChangePassword → false` and syncs `employee_map`. */
     suspend fun markPasswordChanged(adminId: String, uid: String)
 
-    // ─── Tasks ──────────────────────────────────────────────────────────────
+    /** Writes the FCM token. Pass "" to clear on logout. */
+    suspend fun saveFcmToken(adminId: String, uid: String, token: String)
+
+    // ─── Tasks ───────────────────────────────────────────────────────────────
+
     /** Live stream of all tasks owned by this admin. */
     fun observeTasksForAdmin(adminId: String): Flow<List<TaskRecord>>
 
-    /**
-     * Live stream of all tasks assigned to this employee — uses a Firestore
-     * collectionGroup query because tasks live under each owning admin.
-     */
+    /** Live stream of all tasks assigned to this employee. Flat query — no collectionGroup. */
     fun observeTasksForUser(userId: String): Flow<List<TaskRecord>>
 
     suspend fun addTask(
@@ -56,37 +58,110 @@ interface WorkforceDirectory {
         location: String,
         time: String,
         day: String,
-        priority: String,   // "Low" | "Medium" | "High"
+        priority: String,       // "Low" | "Medium" | "High"
+        departmentId: String = "",
+        departmentName: String = "",
+        equipmentId: String = "",
+        equipmentName: String = "",
+        checklist: List<ChecklistItem> = emptyList(),
+        attachments: List<String> = emptyList(),
+        address: String = "",
+        latitude: Double? = null,
+        longitude: Double? = null,
+        dueDate: Long? = null,
+        ownerAdminName: String = "",
+        assigneeName: String = "",
     ): TaskRecord
 
-    // ─── Inventory ──────────────────────────────────────────────────────────
-    /** Live stream of all inventory items in this admin's subcollection. */
+    /**
+     * Mark a task as accepted by the assigned user. Writes status="in_progress",
+     * acceptedAt = serverTimestamp, and the captured lat/lng (may be null when
+     * permission is denied).
+     */
+    suspend fun acceptTask(
+        taskId: String,
+        lat: Double? = null,
+        lon: Double? = null,
+    ): TaskRecord
+
+    /** Live stream of chat notes for a task (subcollection). Sorted ascending. */
+    fun observeTaskNotes(taskId: String): Flow<List<TaskNote>>
+
+    /** Append a chat note. Returns the persisted record. */
+    suspend fun addTaskNote(
+        taskId: String,
+        authorId: String,
+        authorName: String,
+        role: String,           // "admin" | "user"
+        message: String,
+    ): TaskNote
+
+    /**
+     * Updates task status and keeps `tasksOpen` counter consistent.
+     * "Done" → sets `completedAt`, decrements assigned employee's counter.
+     */
+    suspend fun updateTaskStatus(
+        adminId: String,
+        taskId: String,
+        assignedUserId: String?,
+        newStatus: String,      // "Todo" | "InProgress" | "Done"
+    ): TaskRecord
+
+    /** Toggle a single checklist item's done state and persist. */
+    suspend fun setChecklistItemDone(
+        taskId: String,
+        index: Int,
+        done: Boolean,
+    )
+
+    /**
+     * Uploads a local image (content:// or file:// URI as a String) to Cloud
+     * Storage under `task-attachments/{adminId}/...` and returns the public
+     * download URL that should be appended to a TaskRecord's `attachments`.
+     */
+    suspend fun uploadTaskAttachment(adminId: String, contentUri: String): String
+
+    /** Replace a task's attachments array with [urls]. */
+    suspend fun updateTaskAttachments(taskId: String, urls: List<String>)
+
+    // ─── Inventory ───────────────────────────────────────────────────────────
+
+    /** Live stream of all inventory items for this admin. */
     fun observeInventory(adminId: String): Flow<List<InventoryRecord>>
 
     suspend fun addInventoryItem(
         adminId: String,
         name: String,
-        type: String,        // "equipment" | "material"
+        type: String,           // "equipment" | "material"
         price: Double,
         quantity: Int,
     ): InventoryRecord
 
-    // ─── Attendance ─────────────────────────────────────────────────────────
-    /** Live stream of every attendance record in this admin's subcollection. */
+    /** Live stream of all inventory transactions (issues / returns / restocks). */
+    fun observeInventoryTransactions(adminId: String): Flow<List<InventoryTransaction>>
+
+    suspend fun addInventoryTransaction(
+        adminId: String,
+        userId: String,         // employee who received or returned the item
+        itemId: String,
+        itemName: String,       // denormalised for display without extra read
+        type: String,           // "issue" | "return" | "restock"
+        quantity: Int,
+    ): InventoryTransaction
+
+    // ─── Attendance ──────────────────────────────────────────────────────────
+
+    /** Live stream of all attendance logs for this admin. */
     fun observeAttendance(adminId: String): Flow<List<AttendanceRecord>>
 
-    /** Records a check-in for [userId] at the current server time, with
-     *  validated location and shift-relative status (ON_TIME / LATE). */
     suspend fun markCheckIn(
         adminId: String,
         userId: String,
         lat: Double?,
         lng: Double?,
-        checkInStatus: String,
+        checkInStatus: String,  // "ON_TIME" | "LATE"
     ): AttendanceRecord
 
-    /** Updates an existing attendance doc with `checkOut = serverTimestamp`
-     *  and the final location of the employee. */
     suspend fun markCheckOut(
         adminId: String,
         userId: String,
@@ -95,7 +170,11 @@ interface WorkforceDirectory {
         lng: Double?,
     )
 
-    // ─── Check-ins (location pings) ─────────────────────────────────────────
+    // ─── Check-ins (location pings) ──────────────────────────────────────────
+
+    /** Live stream of recent GPS pings for this admin (capped at 500). */
+    fun observeCheckins(adminId: String): Flow<List<CheckinPing>>
+
     suspend fun recordCheckIn(
         adminId: String,
         userId: String,
@@ -103,9 +182,226 @@ interface WorkforceDirectory {
         longitude: Double,
     ): String
 
-    /** Live stream of GPS check-in pings under the admin scope. */
-    fun observeCheckins(adminId: String): Flow<List<CheckinPing>>
+    // ─── Notifications ────────────────────────────────────────────────────────
+
+    /** Live stream of notifications for a specific user under this admin. */
+    fun observeNotifications(adminId: String, userId: String): Flow<List<NotificationRecord>>
+
+    suspend fun markNotificationRead(notificationId: String)
+
+    suspend fun addNotification(
+        adminId: String,
+        userId: String,
+        title: String,
+        body: String,
+        type: String,           // "task_assigned" | "task_updated" | "check_in" | etc.
+        relatedId: String?,     // taskId, attendanceId, etc.
+    ): NotificationRecord
+
+    // ─── Spares ────────────────────────────────────────────────────────────────
+
+    /** Live stream of all spare items for this admin. */
+    fun observeSpareItems(adminId: String): Flow<List<SpareItemRecord>>
+
+    suspend fun addSpareItem(
+        adminId: String,
+        item: SpareItemRecord,
+    ): SpareItemRecord
+
+    suspend fun updateSpareItem(
+        adminId: String,
+        itemId: String,
+        updates: Map<String, Any?>,
+    ): SpareItemRecord
+
+    suspend fun deleteSpareItem(adminId: String, itemId: String)
+
+    /**
+     * Bulk-delete spare items in Firestore-batch chunks (≤500 per batch).
+     * Returns the number of docs successfully deleted. Used by the
+     * multi-selection delete feature on inventory screens.
+     */
+    suspend fun bulkDeleteSpareItems(adminId: String, itemIds: List<String>): Int
+
+    /**
+     * Bulk-insert spare items in Firestore-batch chunks (≤500 per batch).
+     * Returns the number of records successfully written. Useful for
+     * Excel-imported spare lists.
+     */
+    suspend fun bulkInsertSpareItems(adminId: String, items: List<SpareItemRecord>): Int
+
+    // ─── Departments ──────────────────────────────────────────────────────────
+
+    fun observeDepartments(adminId: String): Flow<List<DepartmentRecord>>
+
+    suspend fun addDepartment(adminId: String, name: String): DepartmentRecord
+
+    suspend fun updateDepartment(adminId: String, departmentId: String, name: String): DepartmentRecord
+
+    suspend fun deleteDepartment(adminId: String, departmentId: String)
+
+    // ─── Equipment ────────────────────────────────────────────────────────────
+
+    fun observeEquipment(adminId: String): Flow<List<EquipmentRecord>>
+
+    suspend fun addEquipment(adminId: String, name: String, departmentId: String): EquipmentRecord
+
+    suspend fun updateEquipment(
+        adminId: String,
+        equipmentId: String,
+        name: String,
+        departmentId: String,
+    ): EquipmentRecord
+
+    suspend fun deleteEquipment(adminId: String, equipmentId: String)
+
+    // ─── Danger zone ──────────────────────────────────────────────────────────
+
+    /**
+     * Permanently deletes every document in all tenant-isolated collections
+     * where `adminId == [adminId]`. Irreversible — caller must confirm with user.
+     */
+    suspend fun deleteAllData(adminId: String)
 }
+
+// ─── Data classes ────────────────────────────────────────────────────────────
+
+data class EmployeeRecord(
+    val id: String,
+    val name: String,
+    val role: String,
+    val phone: String,
+    val zone: String,
+    val status: String,             // "Active" | "OnLeave" | "Inactive"
+    val tasksOpen: Int = 0,
+    val email: String = "",
+    val gender: String = "",        // "Male" | "Female" | "Other" | ""
+    val employmentType: String = "", // "Fulltime" | "Contract" | ""
+    val joiningDateMs: Long? = null,
+    val salary: Double = 0.0,
+    val photoUrl: String = "",
+    val dateOfBirthMs: Long? = null,
+    val address: String = "",
+    val department: String = "",
+    val reportingTo: String = "",
+    val permission: String = "",    // "Viewer" | "Field" | "Super" | ""
+    val emergencyName: String = "",
+    val emergencyRelation: String = "",
+    val emergencyPhone: String = "",
+    val shift: String = "Shift1",   // "Shift1" (09:00-18:00) | "Shift2" (13:00-23:00)
+    val updatedAt: Long? = null,
+    val deletedAt: Long? = null,    // non-null = soft-deleted
+    val fcmToken: String = "",
+)
+
+data class EmployeeDraft(
+    val name: String,
+    val role: String,
+    val email: String,
+    val password: String = "",      // used only for Auth account creation, never stored
+    val phone: String,
+    val gender: String,
+    val employmentType: String,
+    val joiningDateMs: Long?,
+    val salary: Double,
+    val zone: String = "",
+    val status: String = "Active",
+    val photoUri: String? = null,
+    val dateOfBirthMs: Long? = null,
+    val address: String = "",
+    val department: String = "",
+    val reportingTo: String = "",
+    val permission: String = "Field",
+    val emergencyName: String = "",
+    val emergencyRelation: String = "",
+    val emergencyPhone: String = "",
+    val shift: String = "Shift1",
+)
+
+data class TaskRecord(
+    val id: String,
+    val adminId: String,
+    val userId: String?,            // assignedUserId in Firestore
+    val title: String,
+    val location: String,
+    val time: String,
+    val day: String,
+    val priority: String,           // "Low" | "Medium" | "High"
+    val status: String,             // "Todo" | "InProgress" | "Done"
+    val assigneeInitials: String = "",
+    val assigneeName: String = "",
+    val ownerAdminId: String = "",
+    val ownerAdminName: String = "",
+    val scheduledDateMs: Long? = null,
+    val dueDate: Long? = null,
+    val createdAtMs: Long? = null,
+    val acceptedAt: Long? = null,
+    val acceptedLat: Double? = null,
+    val acceptedLon: Double? = null,
+    val completedAt: Long? = null,
+    val updatedAt: Long? = null,
+    // Service Details (Phase B)
+    val departmentId: String = "",
+    val departmentName: String = "",
+    val equipmentId: String = "",
+    val equipmentName: String = "",
+    // Checklist (Phase B)
+    val checklist: List<ChecklistItem> = emptyList(),
+    // Attachments (Phase C — populated as URL list)
+    val attachments: List<String> = emptyList(),
+    // Geocoded address (Phase D — populated when address is resolved)
+    val address: String = "",
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+)
+
+data class TaskNote(
+    val id: String,
+    val taskId: String,
+    val authorId: String,
+    val authorName: String,
+    val role: String,               // "admin" | "user"
+    val message: String,
+    val createdAtMs: Long? = null,
+)
+
+data class ChecklistItem(
+    val text: String,
+    val done: Boolean = false,
+)
+
+data class InventoryRecord(
+    val id: String,
+    val name: String,
+    val type: String,               // "equipment" | "material"
+    val price: Double,
+    val quantity: Int,
+)
+
+data class InventoryTransaction(
+    val id: String,
+    val adminId: String,
+    val userId: String,
+    val itemId: String,
+    val itemName: String,
+    val type: String,               // "issue" | "return" | "restock"
+    val quantity: Int,
+    val createdAt: Long? = null,
+)
+
+data class AttendanceRecord(
+    val id: String,
+    val userId: String,
+    val dateMs: Long,
+    val checkInMs: Long,
+    val checkInLat: Double? = null,
+    val checkInLng: Double? = null,
+    val checkInStatus: String = "ON_TIME",
+    val checkOutMs: Long? = null,
+    val checkOutLat: Double? = null,
+    val checkOutLng: Double? = null,
+    val status: String = "CHECKED_IN", // "CHECKED_IN" | "COMPLETED"
+)
 
 data class CheckinPing(
     val id: String,
@@ -115,107 +411,59 @@ data class CheckinPing(
     val timestampMs: Long,
 )
 
-data class EmployeeRecord(
-    val id: String,
-    val name: String,
-    val role: String,
-    val phone: String,
-    val zone: String,
-    val status: String,        // "Active" | "OnLeave" | "Inactive"
-    val tasksOpen: Int = 0,
-    /* HR fields — all optional so legacy docs without them still load */
-    val email: String = "",
-    val gender: String = "",            // "Male" | "Female" | "Other" | ""
-    val employmentType: String = "",    // "Fulltime" | "Contract" | ""
-    val joiningDateMs: Long? = null,    // epoch millis from Firestore Timestamp
-    val salary: Double = 0.0,
-    val photoUrl: String = "",          // Firebase Storage download URL
-    val dateOfBirthMs: Long? = null,
-    val address: String = "",
-    val department: String = "",
-    val reportingTo: String = "",
-    val permission: String = "",        // "Viewer" | "Field" | "Super" | ""
-    val emergencyName: String = "",
-    val emergencyRelation: String = "",
-    val emergencyPhone: String = "",
-    /** Work shift — "Shift1" (09:00-18:00) or "Shift2" (13:00-23:00). */
-    val shift: String = "Shift1",
-)
-
-/**
- * Draft used by the "Add employee" form. Exists so the [WorkforceDirectory]
- * contract stays stable even as we keep adding HR fields.
- *
- * [photoUri] is a platform-neutral URI string for a locally-picked image
- * (e.g. an Android `content://...` URI). The Firestore writer uploads it to
- * Firebase Storage and stores the resulting download URL in `photoUrl`.
- */
-data class EmployeeDraft(
-    val name: String,
-    val role: String,                   // job title / designation
-    val email: String,
-    /**
-     * Initial password set by the admin. **Never persisted to Firestore** —
-     * only used to create the Firebase Auth account on the secondary app.
-     * Defaults to an empty string for back-compat (forms must populate it).
-     */
-    val password: String = "",
-    val phone: String,
-    val gender: String,                 // "Male" | "Female" | "Other"
-    val employmentType: String,         // "Fulltime" | "Contract"
-    val joiningDateMs: Long?,           // epoch millis (UTC) at midnight
-    val salary: Double,
-    val zone: String = "",
-    val status: String = "Active",      // initial status
-    val photoUri: String? = null,       // local URI; uploaded by the writer
-    /* Extended HR fields */
-    val dateOfBirthMs: Long? = null,
-    val address: String = "",
-    val department: String = "",
-    val reportingTo: String = "",
-    val permission: String = "Field",   // Viewer | Field | Super
-    val emergencyName: String = "",
-    val emergencyRelation: String = "",
-    val emergencyPhone: String = "",
-    /** Work shift — "Shift1" (09:00-18:00) or "Shift2" (13:00-23:00). */
-    val shift: String = "Shift1",
-)
-
-data class TaskRecord(
+data class NotificationRecord(
     val id: String,
     val adminId: String,
-    val userId: String?,
-    val title: String,
-    val location: String,
-    val time: String,
-    val day: String,
-    val priority: String,      // "Low" | "Medium" | "High"
-    val status: String,        // "Todo" | "InProgress" | "Done"
-    val assigneeInitials: String = "",
-)
-
-data class InventoryRecord(
-    val id: String,
-    val name: String,
-    val type: String,          // "equipment" | "material"
-    val price: Double,
-    val quantity: Int,
-)
-
-data class AttendanceRecord(
-    val id: String,
     val userId: String,
-    /** Epoch millis from Firestore Timestamp (or 0 if not yet set). */
-    val dateMs: Long,
-    val checkInMs: Long,
-    val checkInLat: Double? = null,
-    val checkInLng: Double? = null,
-    /** "ON_TIME" or "LATE" — relative to the user's assigned shift. */
-    val checkInStatus: String = "ON_TIME",
-    val checkOutMs: Long? = null,
-    val checkOutLat: Double? = null,
-    val checkOutLng: Double? = null,
-    /** "CHECKED_IN" or "COMPLETED". */
-    val status: String = "CHECKED_IN",
+    val title: String,
+    val body: String,
+    val type: String,               // "task_assigned" | "task_updated" | "check_in" | etc.
+    val isRead: Boolean = false,
+    val relatedId: String? = null,
+    val createdAt: Long? = null,
+)
+
+data class SpareItemRecord(
+    val id: String,
+    val adminId: String,
+    val category: String,           // "Cable" | "Spare Component"
+    val name: String,
+    val make: String = "",
+    val size: String = "",
+    val core: String = "",
+    val currentRating: String = "",
+    val noOfPoles: String = "",
+    val unit: String = "",
+    val price: Double,
+    val stockQty: Int,
+    val hsn: String,
+    val vendorName1: String = "",
+    val vendorGst1: String = "",
+    val vendorContact1: String = "",
+    val vendorAddress1: String = "",
+    val vendorName2: String = "",
+    val vendorGst2: String = "",
+    val vendorContact2: String = "",
+    val vendorAddress2: String = "",
+    val vendorLocation: String = "",
+    val createdAt: Long? = null,
+    val updatedAt: Long? = null,
+)
+
+data class DepartmentRecord(
+    val id: String,
+    val adminId: String,
+    val name: String,
+    val createdAt: Long? = null,
+    val updatedAt: Long? = null,
+)
+
+data class EquipmentRecord(
+    val id: String,
+    val adminId: String,
+    val name: String,
+    val departmentId: String,
+    val createdAt: Long? = null,
+    val updatedAt: Long? = null,
 )
 

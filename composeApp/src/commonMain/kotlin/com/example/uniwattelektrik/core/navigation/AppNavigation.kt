@@ -45,9 +45,16 @@ sealed interface AdminRoute {
 
     data class EmployeeDetail(val employeeId: String) : AdminRoute
     data class TaskDetail(val taskId: String) : AdminRoute
-    data object Notifications  : AdminRoute
-    data object Financials     : AdminRoute
-    data object NewTask        : AdminRoute
+    data object Notifications        : AdminRoute
+    data object Financials           : AdminRoute
+    data object NewTask              : AdminRoute
+    data object InventoryManagement  : AdminRoute
+    data object Departments          : AdminRoute
+    data object Equipment            : AdminRoute
+    data object SpareList            : AdminRoute
+    data class  SpareItemForm(val item: com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItem? = null) : AdminRoute
+    data class  SpareItemDetail(val item: com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItem) : AdminRoute
+    data object ImportSpareItemsPreview : AdminRoute
 
     enum class TabKey { Dashboard, Employees, Tasks, Attendance, Inventory, Profile }
 }
@@ -84,6 +91,25 @@ class UserNavigator internal constructor() {
         current = stack.last()
         return true
     }
+
+    /**
+     * Simple heuristic to determine if navigation is "forward" (deeper into stack)
+     * or "backward" (popping/returning).
+     */
+    fun isForward(from: AdminRoute, to: AdminRoute): Boolean {
+        // If 'to' is a tab, it's usually considered a reset or horizontal move,
+        // but if we are moving from a Tab to a Non-Tab, it's definitely forward.
+        if (from is AdminRoute.Tab && to !is AdminRoute.Tab) return true
+        
+        // Specific inventory module flow
+        if (from is AdminRoute.Inventory && to is AdminRoute.InventoryManagement) return true
+        if (from is AdminRoute.InventoryManagement && (to is AdminRoute.Departments || to is AdminRoute.Equipment || to is AdminRoute.SpareList)) return true
+        if (to is AdminRoute.SpareItemForm) return true
+        if (to is AdminRoute.SpareItemDetail) return true
+        if (to is AdminRoute.ImportSpareItemsPreview) return true
+
+        return false
+    }
 }
 
 class AdminNavigator internal constructor() {
@@ -107,6 +133,25 @@ class AdminNavigator internal constructor() {
         stack.removeAt(stack.lastIndex)
         current = stack.last()
         return true
+    }
+
+    /**
+     * Simple heuristic to determine if navigation is "forward" (deeper into stack)
+     * or "backward" (popping/returning).
+     */
+    fun isForward(from: AdminRoute, to: AdminRoute): Boolean {
+        // If 'to' is a tab, it's usually considered a reset or horizontal move,
+        // but if we are moving from a Tab to a Non-Tab, it's definitely forward.
+        if (from is AdminRoute.Tab && to !is AdminRoute.Tab) return true
+        
+        // Specific inventory module flow
+        if (from is AdminRoute.Inventory && to is AdminRoute.InventoryManagement) return true
+        if (from is AdminRoute.InventoryManagement && (to is AdminRoute.Departments || to is AdminRoute.Equipment || to is AdminRoute.SpareList)) return true
+        if (to is AdminRoute.SpareItemForm) return true
+        if (to is AdminRoute.SpareItemDetail) return true
+        if (to is AdminRoute.ImportSpareItemsPreview) return true
+
+        return false
     }
 }
 
