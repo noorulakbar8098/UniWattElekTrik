@@ -53,6 +53,7 @@ import com.example.uniwattelektrik.feature.user.presentation.screens.ProfileScre
 import com.example.uniwattelektrik.feature.user.presentation.screens.TaskDetailScreen
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.uniwattelektrik.platform.PlatformBackHandler
 
 /**
  * Top-level container for the Admin app — same shape as [com.example.uniwattelektrik.feature.user.presentation.UserShell]
@@ -127,6 +128,23 @@ fun AdminShell(
     Box(
         modifier = Modifier.fillMaxSize(),
     ) {
+        // ── System back navigation ─────────────────────────────────────────
+        // Priority: 1) Add-Employee sheet owns its own BackHandler (skip);
+        // 2) Import preview special-cases stagedSheet cleanup; 3) pop stack;
+        // 4) on a non-Dashboard tab → switch to Dashboard; 5) on Dashboard →
+        // disable so the OS finishes the Activity.
+        PlatformBackHandler(enabled = !showAddEmployee.value && current != AdminRoute.Dashboard) {
+            when (current) {
+                AdminRoute.ImportSpareItemsPreview -> {
+                    inventoryVm.stagedSheet = null
+                    nav.pop()
+                }
+                else -> {
+                    if (!nav.pop()) nav.selectTab(AdminRoute.Dashboard)
+                }
+            }
+        }
+
         AnimatedContent(
             targetState = current,
             transitionSpec = {
@@ -168,7 +186,7 @@ fun AdminShell(
                 AdminRoute.Tasks     -> AdminTasksScreen(
                     workforceVm  = workforceVm,
                     adminUid     = user.id,
-                    onAssign     = { nav.navigate(AdminRoute.NewTask) },
+                    onAssign     = { nav.navigate(AdminRoute.NewTask()) },
                     onBack       = { nav.selectTab(AdminRoute.Dashboard) },
                     onTaskClick  = { id -> nav.navigate(AdminRoute.TaskDetail(id)) },
                 )
@@ -181,14 +199,17 @@ fun AdminShell(
                     currentUserId   = user.id,
                     currentUserName = user.displayName?.takeIf { it.isNotBlank() } ?: user.email,
                     adminUid        = user.id,
+                    // Admin-only edit action — open NewTaskScreen in edit mode.
+                    onEdit          = { id -> nav.navigate(AdminRoute.NewTask(editTaskId = id)) },
                 )
-                AdminRoute.NewTask   -> NewTaskScreen(
+                is AdminRoute.NewTask   -> NewTaskScreen(
                     workforceVm      = workforceVm,
                     inventoryVm      = inventoryVm,
                     adminUid         = user.id,
                     onBack           = { nav.pop() },
                     onCreated        = { nav.pop() },
                     adminDisplayName = user.displayName?.takeIf { it.isNotBlank() } ?: user.email,
+                    editTaskId       = r.editTaskId,
                 )
                 AdminRoute.Attendance -> AdminAttendanceScreen(
                     workforceVm = workforceVm,
@@ -303,7 +324,7 @@ fun AdminShell(
         if (workforceLoading) {
             val skeletonType = when (current) {
                 AdminRoute.Dashboard -> SkeletonType.Dashboard
-                AdminRoute.NewTask,
+                is AdminRoute.NewTask,
                 is AdminRoute.SpareItemForm -> SkeletonType.Form
                 else -> SkeletonType.List
             }

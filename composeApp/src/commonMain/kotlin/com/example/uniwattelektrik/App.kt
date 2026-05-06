@@ -37,6 +37,7 @@ import com.example.uniwattelektrik.feature.auth.presentation.screens.LoginScreen
 import com.example.uniwattelektrik.feature.auth.presentation.state.AuthRoute
 import com.example.uniwattelektrik.feature.auth.presentation.state.AuthUiState
 import com.example.uniwattelektrik.feature.user.presentation.UserShell
+import com.example.uniwattelektrik.platform.PlatformBackHandler
 
 /**
  * App entry point.
@@ -126,6 +127,17 @@ fun App() {
                             // Auth screens render inside the safe area too.
                             .windowInsetsPadding(WindowInsets.systemBars),
                     ) {
+                        // System back inside the auth flow:
+                        //  AdminSignUp → AdminLogin   (matches the visible header arrow)
+                        //  AdminLogin  → UserLogin    (default landing)
+                        //  UserLogin   → handler disabled, OS finishes the app
+                        PlatformBackHandler(enabled = route != AuthRoute.UserLogin) {
+                            viewModel.clearForm()
+                            route = when (route) {
+                                AuthRoute.AdminSignUp -> AuthRoute.AdminLogin
+                                else                  -> AuthRoute.UserLogin
+                            }
+                        }
                         when (route) {
                             AuthRoute.UserLogin -> LoginScreen(
                                 viewModel = viewModel,

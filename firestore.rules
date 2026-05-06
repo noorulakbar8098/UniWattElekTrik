@@ -60,6 +60,25 @@ service cloud.firestore {
             delete, list:   if ownsExisting();
       // Assigned employee can read & update their own tasks.
       allow read, update:   if isAuthed() && resource.data.assignedUserId == request.auth.uid;
+
+      // ── Notes subcollection (chat between admin & assigned user) ─────────
+      // Both the owning admin AND the currently-assigned user may read,
+      // create and modify notes on a task. Rules are evaluated against the
+      // PARENT task doc via get() so the chat stays scoped to the same
+      // tenant + assignee pair the rest of the app already enforces.
+      match /notes/{noteId} {
+        function parentTask() {
+          return get(/databases/$(database)/documents/tasks/$(taskId)).data;
+        }
+        function isTaskAdmin() {
+          return isAuthed() && parentTask().adminId == request.auth.uid;
+        }
+        function isTaskAssignee() {
+          return isAuthed() && parentTask().assignedUserId == request.auth.uid;
+        }
+        allow read, list, create, update, delete:
+            if isTaskAdmin() || isTaskAssignee();
+      }
     }
 
     // ── Attendance ─────────────────────────────────────────────────────────

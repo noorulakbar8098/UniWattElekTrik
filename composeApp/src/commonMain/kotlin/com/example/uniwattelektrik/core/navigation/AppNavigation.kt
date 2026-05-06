@@ -47,7 +47,12 @@ sealed interface AdminRoute {
     data class TaskDetail(val taskId: String) : AdminRoute
     data object Notifications        : AdminRoute
     data object Financials           : AdminRoute
-    data object NewTask              : AdminRoute
+    /**
+     * The task creation/edit form. When [editTaskId] is non-null the form
+     * prefills its fields from the live [TaskRecord] and saves via
+     * `updateTask` instead of `addTask`.
+     */
+    data class  NewTask(val editTaskId: String? = null) : AdminRoute
     data object InventoryManagement  : AdminRoute
     data object Departments          : AdminRoute
     data object Equipment            : AdminRoute

@@ -11,22 +11,21 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -44,6 +43,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.uniwattelektrik.core.components.AppCard
+import com.example.uniwattelektrik.core.components.InventoryScreenHeader
+import com.example.uniwattelektrik.core.components.PremiumGradientFab
+import com.example.uniwattelektrik.core.components.PremiumHeaderStatusBarColor
 import com.example.uniwattelektrik.core.theme.AppTheme
 import com.example.uniwattelektrik.feature.admin.presentation.InventoryViewModel
 import com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.MinimalSpareCard
@@ -77,7 +79,7 @@ fun AdminInventoryScreen(
     }
 
     com.example.uniwattelektrik.core.theme.SetStatusBar(
-        color = AppTheme.Bg, darkIcons = true,
+        color = PremiumHeaderStatusBarColor, darkIcons = false,
     )
 
     // ── Multi-selection state ───────────────────────────────────────────────
@@ -129,91 +131,75 @@ fun AdminInventoryScreen(
 
     Box(modifier = modifier.fillMaxSize().background(appScreenBackground())) {
         Column(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(20.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "Inventory",
-                        style = com.example.uniwattelektrik.core.theme.AppTypography.HeaderTitle
-                            .copy(color = AppTheme.Ink900),
-                    )
-                    Text(
-                        "${items.size} Spares · ${grouped.size} categories · $lowStock low",
-                        color = AppTheme.Ink500, fontSize = 12.sp,
-                    )
-                }
-                androidx.compose.material3.IconButton(onClick = onManage) {
-                    androidx.compose.material3.Icon(
-                        imageVector = Icons.Outlined.Settings,
-                        contentDescription = "Manage",
-                        tint = AppTheme.Ink700,
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .height(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(AppTheme.Brand50)
-                        .clickable(onClick = onImportExcel)
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "⬆ Import Excel", color = AppTheme.Brand, fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .height(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(AppTheme.Brand)
-                        .clickable(onClick = onAddSpare)
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "+ Add Spare", color = Color.White, fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+
+            // ── Premium Gradient Header ─────────────────────────────────────
+            InventoryScreenHeader(
+                title = "Inventory",
+                subtitle = "${items.size} SPARES · ${grouped.size} CATEGORIES · $lowStock LOW",
+                trailing = {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color.White.copy(alpha = 0.18f))
+                            .clickable(onClick = onManage),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Settings,
+                            contentDescription = "Manage",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                },
+            )
+
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 180.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                grouped.forEach { (category, catItems) ->
+                    stickyHeader(key = "h_$category") {
+                        InventoryCategoryHeader(
+                            category = category,
+                            count    = catItems.size,
+                            lowCount = catItems.count { it.stockQty < 20 },
+                        )
+                    }
+                    items(catItems, key = { it.id.ifBlank { "${category}_${it.name}_${it.size}_${it.make}" } }) { item ->
+                        MinimalSpareCard(
+                            item = item,
+                            selectionMode = selectionMode,
+                            selected = selectedIds.containsKey(item.id),
+                            onClick = {
+                                if (selectionMode) toggle(item.id)
+                                else onItemClick(item)
+                            },
+                            onLongClick = { toggle(item.id) },
+                        )
+                    }
                 }
             }
         }
 
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 100.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            grouped.forEach { (category, catItems) ->
-                stickyHeader(key = "h_$category") {
-                    InventoryCategoryHeader(
-                        category = category,
-                        count    = catItems.size,
-                        lowCount = catItems.count { it.stockQty < 20 },
-                    )
-                }
-                items(catItems, key = { it.id.ifBlank { "${category}_${it.name}_${it.size}_${it.make}" } }) { item ->
-                    MinimalSpareCard(
-                        item = item,
-                        selectionMode = selectionMode,
-                        selected = selectedIds.containsKey(item.id),
-                        onClick = {
-                            if (selectionMode) toggle(item.id)
-                            else onItemClick(item)
-                        },
-                        onLongClick = { toggle(item.id) },
-                    )
-                }
-            }
-        }
+        // ── FABs (hidden during multi-selection) ─────────────────────────────
+        if (!selectionMode) {
+            // Import Excel — bottom-LEFT
+            PremiumGradientFab(
+                onClick = onImportExcel,
+                icon = Icons.Outlined.FileUpload,
+                contentDescription = "Import Excel",
+                alignment = Alignment.BottomStart,
+            )
+            // Add Spare — bottom-RIGHT
+            PremiumGradientFab(
+                onClick = onAddSpare,
+                icon = Icons.Filled.Add,
+                contentDescription = "Add Spare",
+                alignment = Alignment.BottomEnd,
+            )
         }
 
         // ── Multi-selection action bar ───────────────────────────────────────

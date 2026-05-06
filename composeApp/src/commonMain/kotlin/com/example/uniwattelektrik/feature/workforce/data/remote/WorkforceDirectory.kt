@@ -59,6 +59,7 @@ interface WorkforceDirectory {
         time: String,
         day: String,
         priority: String,       // "Low" | "Medium" | "High"
+        description: String = "",
         departmentId: String = "",
         departmentName: String = "",
         equipmentId: String = "",
@@ -84,6 +85,38 @@ interface WorkforceDirectory {
         lon: Double? = null,
     ): TaskRecord
 
+    /**
+     * Update an existing task with the same field-set as [addTask]. Only the
+     * fields explicitly passed are written — the doc's `createdAt`,
+     * `acceptedAt`, `completedAt` and lifecycle counters are preserved.
+     *
+     * If [userId] differs from the previously assigned user the `tasksOpen`
+     * counter is rebalanced (decrement old, increment new) — only when the
+     * task is still open (not in the "Done" state).
+     */
+    suspend fun updateTask(
+        taskId: String,
+        adminId: String,
+        userId: String?,
+        title: String,
+        location: String,
+        time: String,
+        day: String,
+        priority: String,
+        description: String = "",
+        departmentId: String = "",
+        departmentName: String = "",
+        equipmentId: String = "",
+        equipmentName: String = "",
+        checklist: List<ChecklistItem> = emptyList(),
+        attachments: List<String> = emptyList(),
+        address: String = "",
+        latitude: Double? = null,
+        longitude: Double? = null,
+        dueDate: Long? = null,
+        assigneeName: String = "",
+    ): TaskRecord
+
     /** Live stream of chat notes for a task (subcollection). Sorted ascending. */
     fun observeTaskNotes(taskId: String): Flow<List<TaskNote>>
 
@@ -105,6 +138,26 @@ interface WorkforceDirectory {
         taskId: String,
         assignedUserId: String?,
         newStatus: String,      // "Todo" | "InProgress" | "Done"
+    ): TaskRecord
+
+    /**
+     * Completes a task with full signoff data. Atomically:
+     *  - marks status = "Done", writes completedAt = serverTimestamp
+     *  - stores signoffDescription, downtimeMinutes, rca, totalWorkDurationMs, materialsUsed
+     *  - deducts materialsUsed quantities from spare_items stockQty
+     *  - records inventory_transactions for each consumed item
+     *  - decrements the assignee's tasksOpen counter
+     */
+    suspend fun completeTaskWithSignoff(
+        adminId: String,
+        taskId: String,
+        assignedUserId: String?,
+        signoffDescription: String,
+        downtimeMinutes: Int,
+        rca: String,
+        materialsUsed: List<MaterialUsedItem>,
+        startTimeMs: Long?,
+        endTimeMs: Long,
     ): TaskRecord
 
     /** Toggle a single checklist item's done state and persist. */
@@ -323,6 +376,7 @@ data class TaskRecord(
     val adminId: String,
     val userId: String?,            // assignedUserId in Firestore
     val title: String,
+    val description: String = "",   // long-form details captured on the create-task screen
     val location: String,
     val time: String,
     val day: String,
@@ -353,6 +407,19 @@ data class TaskRecord(
     val address: String = "",
     val latitude: Double? = null,
     val longitude: Double? = null,
+    // ── Task Completion / Signoff (Phase E) ──────────────────────────────
+    val signoffDescription: String = "",  // what work was done / issue resolution
+    val downtimeMinutes: Int = 0,         // total downtime reported by technician
+    val rca: String = "",                 // root cause analysis
+    val totalWorkDurationMs: Long? = null, // endTime - acceptedAt (auto-calculated)
+    val materialsUsed: List<MaterialUsedItem> = emptyList(), // inventory consumed
+)
+
+/** One line-item of material consumed during task completion. */
+data class MaterialUsedItem(
+    val itemId: String = "",
+    val itemName: String = "",
+    val quantity: Int = 0,
 )
 
 data class TaskNote(

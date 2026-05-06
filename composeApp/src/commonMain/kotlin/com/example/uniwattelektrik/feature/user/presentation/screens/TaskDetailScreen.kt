@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Timer
@@ -112,6 +113,13 @@ fun TaskDetailScreen(
     currentUserId: String = "",
     currentUserName: String = "",
     adminUid: String = "",
+    /**
+     * Optional edit handler. When supplied **and** [viewerRole] is
+     * [TaskDetailRole.Admin], a pencil action is rendered in the gradient
+     * header. User-side viewers never see the action even if a handler is
+     * passed, keeping the role-restriction enforced in the UI layer too.
+     */
+    onEdit: ((taskId: String) -> Unit)? = null,
 ) {
     val liveTasks by (workforceVm?.tasks?.collectAsStateWithLifecycle()
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<TaskRecord>()) }
@@ -149,7 +157,17 @@ fun TaskDetailScreen(
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         // Gradient header
-        item { TaskHeader(task = task, ownerName = live?.ownerAdminName.orEmpty(), onBack = onBack) }
+        item {
+            TaskHeader(
+                task = task,
+                ownerName = live?.ownerAdminName.orEmpty(),
+                onBack = onBack,
+                // Edit action visible only when an Admin viewer AND a handler
+                // was provided by the host (currently only the AdminShell wires this).
+                onEdit = if (viewerRole == TaskDetailRole.Admin && onEdit != null)
+                    { { onEdit(taskId) } } else null,
+            )
+        }
 
         // Floating stats card (overlaps header)
         item {
@@ -336,6 +354,92 @@ fun TaskDetailScreen(
             Spacer(Modifier.height(16.dp))
         }
 
+        // Completion Summary card — visible only when task is Done and signoff data exists.
+        if (live != null && live.status == "Done" && (
+                live.signoffDescription.isNotBlank() ||
+                live.rca.isNotBlank() ||
+                live.downtimeMinutes > 0 ||
+                live.materialsUsed.isNotEmpty()
+            )
+        ) {
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    SectionCard(title = "Completion Summary") {
+                        if (live.signoffDescription.isNotBlank()) {
+                            CompletionDetailRow(
+                                label = "Work Done",
+                                value = live.signoffDescription,
+                            )
+                            Spacer(Modifier.height(10.dp))
+                        }
+                        if (live.rca.isNotBlank()) {
+                            CompletionDetailRow(
+                                label = "Root Cause",
+                                value = live.rca,
+                            )
+                            Spacer(Modifier.height(10.dp))
+                        }
+                        if (live.downtimeMinutes > 0) {
+                            CompletionDetailRow(
+                                label = "Downtime",
+                                value = "${live.downtimeMinutes} min",
+                            )
+                            Spacer(Modifier.height(10.dp))
+                        }
+                        live.totalWorkDurationMs?.takeIf { it > 0 }?.let { dur ->
+                            CompletionDetailRow(
+                                label = "Work Duration",
+                                value = formatDuration(dur),
+                            )
+                            Spacer(Modifier.height(10.dp))
+                        }
+                        if (live.materialsUsed.isNotEmpty()) {
+                            Text(
+                                "MATERIALS USED",
+                                color = InkSecondary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.8.sp,
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            live.materialsUsed.forEach { m ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(Brand),
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            m.itemName.ifBlank { m.itemId },
+                                            color = InkPrimary,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                    }
+                                    Text(
+                                        "× ${m.quantity}",
+                                        color = InkSecondary,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+
         // Location card
         item {
             Box(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -459,6 +563,7 @@ private fun TaskHeader(
     task: com.example.uniwattelektrik.core.sample.SampleTask,
     ownerName: String,
     onBack: () -> Unit,
+    onEdit: (() -> Unit)? = null,
 ) {
     com.example.uniwattelektrik.core.components.PremiumHeaderBackground(
         roundedBottom = false,
@@ -481,13 +586,16 @@ private fun TaskHeader(
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f),
                 )
-                GlassButton(onClick = {}) {
-                    Icon(
-                        imageVector = Icons.Filled.MoreVert,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp),
-                    )
+                // Admin-only edit action — hidden entirely for User viewers.
+                if (onEdit != null) {
+                    GlassButton(onClick = onEdit) {
+                        Icon(
+                            imageVector = Icons.Filled.Edit,
+                            contentDescription = "Edit task",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
                 }
             }
 
@@ -622,7 +730,9 @@ private fun StatsCard(task: com.example.uniwattelektrik.core.sample.SampleTask, 
             .padding(vertical = 16.dp),
     ) {
         StatItem(
-            value = task.status.label.uppercase().take(6),
+            // Display the full status (e.g. "IN PROGRESS"); StatItem auto-shrinks the
+            // font for longer labels so it never gets truncated to "INPROG".
+            value = humanStatusLabel(task.status.label).uppercase(),
             label = "STATUS",
             valueColor = statusColor(task.status.label),
             modifier = Modifier.weight(1f),
@@ -660,7 +770,14 @@ private fun StatItem(
         Text(
             value,
             color = valueColor,
-            fontSize = if (value.length <= 4) 22.sp else 16.sp,
+            // Scale value font down for longer strings so labels like
+            // "IN PROGRESS" fit on one line at any column width.
+            fontSize = when {
+                value.length <= 4  -> 22.sp
+                value.length <= 7  -> 16.sp
+                value.length <= 11 -> 13.sp
+                else               -> 11.sp
+            },
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -982,7 +1099,11 @@ private fun sampleFromRecord(t: TaskRecord): com.example.uniwattelektrik.core.sa
     return com.example.uniwattelektrik.core.sample.SampleTask(
         id = code,
         title = t.title,
-        description = "Site work scheduled at ${t.location}. Follow service schedule.",
+        // Prefer the admin-authored description when present, fall back to a
+        // synthesized line so older records (no description field) still render.
+        description = t.description.ifBlank {
+            "Site work scheduled at ${t.location}. Follow service schedule."
+        },
         location = t.location.ifBlank { "—" },
         distanceKm = 0.0,
         time = t.time,
@@ -998,6 +1119,18 @@ private fun statusColor(status: String): Color = when (status.lowercase()) {
     "in progress", "active"  -> Brand
     "to do", "queued"        -> Color(0xFF94A3B8)
     else                      -> Brand
+}
+
+/**
+ * Human-friendly status label for the StatsCard. Splits camel-case codes coming
+ * from the data layer (e.g. "InProgress" → "In Progress") so the value displays
+ * naturally instead of looking like a constant.
+ */
+private fun humanStatusLabel(raw: String): String = when (raw.lowercase().replace(" ", "")) {
+    "inprogress", "active"  -> "In Progress"
+    "todo", "queued"        -> "To Do"
+    "completed", "done"     -> "Done"
+    else                    -> raw
 }
 
 /* ─── Activity timeline builder ────────────────────────────────────────── */
@@ -1110,6 +1243,39 @@ private fun priorityIconGradient(priority: String): List<Color> = when (priority
 /* ─────────────────────────────────────────────────────────────────────── *
  *  MATERIAL DETAILS + ATTACHMENTS (live data)
  * ─────────────────────────────────────────────────────────────────────── */
+
+@Composable
+private fun CompletionDetailRow(label: String, value: String) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            label.uppercase(),
+            color = InkSecondary,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.8.sp,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            value,
+            color = InkPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            lineHeight = 20.sp,
+        )
+    }
+}
+
+/** Formats a duration in milliseconds to a human-readable string, e.g. "2 h 30 min". */
+private fun formatDuration(ms: Long): String {
+    val totalMin = ms / 60_000
+    val hours = totalMin / 60
+    val minutes = totalMin % 60
+    return when {
+        hours > 0 && minutes > 0 -> "$hours h $minutes min"
+        hours > 0                 -> "$hours h"
+        else                      -> "$minutes min"
+    }
+}
 
 @Composable
 private fun MaterialRow(label: String, value: String) {

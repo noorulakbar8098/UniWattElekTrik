@@ -1,5 +1,9 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens
 
+import com.example.uniwattelektrik.core.components.DottedClickable
+import com.example.uniwattelektrik.core.components.DottedField
+import com.example.uniwattelektrik.core.components.DottedReadOnly
+import com.example.uniwattelektrik.core.components.FieldLabel
 import com.example.uniwattelektrik.core.theme.appScreenBackground
 
 import androidx.compose.foundation.background
@@ -294,11 +298,12 @@ fun AdminEmployeesScreen(
             }
         }
 
-        // ── Floating action button (gradient circle, bottom-right) ────
+        // ── Floating action button (sits above the bottom nav, matches Task list FAB) ────
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(end = 20.dp, bottom = 24.dp)
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(end = 24.dp, bottom = 100.dp)
                 .size(64.dp)
                 .shadow(elevation = 22.dp, shape = CircleShape, spotColor = Highlight.copy(alpha = 0.6f))
                 .clip(CircleShape)
@@ -333,14 +338,9 @@ private fun EmployeesGradientHeader(
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Top row: back / title / add
+            // Top row: title / add
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Shared GlassBackButton — matches Task Management style across the app.
-                // Employees is a top-level tab so this is a visual-only no-op.
-                com.example.uniwattelektrik.core.components.GlassBackButton(
-                    onClick = { /* top-level tab — no parent */ },
-                )
-                Spacer(Modifier.width(12.dp))
+                // Back button hidden — Employees is a top-level tab.
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text  = "Employees",
@@ -351,7 +351,7 @@ private fun EmployeesGradientHeader(
                         style = com.example.uniwattelektrik.core.theme.AppTypography.HeaderSubtitle,
                     )
                 }
-                HeaderIconButton(emoji = "+", semiTransparent = false, onClick = onAdd)
+                // Plus button removed from header — adding is now exclusively via the bottom-right FAB.
             }
 
             // Search bar (rounded, semi-transparent white)
@@ -863,6 +863,11 @@ private fun AddEmployeeSheet(
     onSubmit: (EmployeeDraft) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Tint the system status bar to match the gradient header (matches the
+    // Task creation screen behaviour). Without this, white icons would be
+    // invisible on a light status bar background on some devices.
+    com.example.uniwattelektrik.core.theme.SetStatusBar(color = Highlight, darkIcons = false)
+
     /* ── Personal ───────────────────────────────────────────────────── */
     var name by remember { mutableStateOf("") }
     var dobMs by remember { mutableStateOf<Long?>(null) }
@@ -1017,30 +1022,39 @@ private fun AddEmployeeSheet(
                 }
 
                 // 3. Personal Information
-                FormSection(emoji = "👤", title = "Personal Information") {
-                    FieldRow(
-                        icon = Icons.Outlined.Person, label = "Full name", required = true,
-                        errorText = nameError,
-                        isSuccess = name.isNotBlank() && nameError == null,
-                    ) {
-                        UnderlinedField(
+                FormSection(
+                    index = 0,
+                    icon  = Icons.Outlined.Person,
+                    title = "Personal Information",
+                    tint  = Highlight,
+                    bg    = Color(0xFFE6F0FF),
+                ) {
+                    Column {
+                        FieldLabel("Full name", required = true)
+                        DottedField(
                             value = name, onChange = { name = it },
                             placeholder = "e.g. Ravi Kumar",
+                            leadingIcon = Icons.Outlined.Person,
+                            leadingTint = Highlight, leadingBg = Color(0xFFE6F0FF),
                             imeAction = ImeAction.Next,
                             enabled = !saving,
+                            isError = nameError != null,
+                            errorText = nameError,
                         )
                     }
-                    FieldRow(
-                        icon = Icons.Outlined.Cake, label = "Date of birth",
-                        onClick = { if (!saving) showDobDate = true },
-                        trailing = { TrailingChevron() },
-                    ) {
-                        StaticFieldText(
-                            text = dobMs?.let(::formatDate) ?: "Tap to pick a date",
+                    Column {
+                        FieldLabel("Date of birth")
+                        DottedClickable(
+                            value = dobMs?.let(::formatDate) ?: "Tap to pick a date",
                             muted = dobMs == null,
+                            leadingIcon = Icons.Outlined.Cake,
+                            leadingTint = Highlight, leadingBg = Color(0xFFE6F0FF),
+                            enabled = !saving,
+                            onClick = { showDobDate = true },
                         )
                     }
-                    FieldRow(icon = Icons.Outlined.Wc, label = "Gender") {
+                    Column {
+                        FieldLabel("Gender")
                         GenderSegmented(
                             value = gender,
                             onChange = {
@@ -1050,83 +1064,85 @@ private fun AddEmployeeSheet(
                             enabled = !saving,
                         )
                     }
-                    FieldRow(
-                        icon = Icons.Outlined.Phone, label = "Phone", required = true,
-                        errorText = phoneError,
-                        isSuccess = phone.isNotBlank() && phoneError == null,
-                    ) {
-                        UnderlinedField(
+                    Column {
+                        FieldLabel("Phone", required = true)
+                        DottedField(
                             value = phone, onChange = { phone = it },
                             placeholder = "10-digit mobile",
-                            keyboardType = KeyboardType.Phone,
+                            leadingIcon = Icons.Outlined.Phone,
+                            leadingTint = Highlight, leadingBg = Color(0xFFE6F0FF),
+                            keyboard = KeyboardType.Phone,
                             imeAction = ImeAction.Next,
                             enabled = !saving,
+                            isError = phoneError != null,
+                            errorText = phoneError,
                         )
                     }
-                    FieldRow(
-                        icon = Icons.Outlined.Email, label = "Email", required = true,
-                        errorText = emailError,
-                        isSuccess = email.isNotBlank() && emailError == null,
-                    ) {
-                        UnderlinedField(
+                    Column {
+                        FieldLabel("Email", required = true)
+                        DottedField(
                             value = email, onChange = { email = it },
                             placeholder = "name@company.com",
-                            keyboardType = KeyboardType.Email,
+                            leadingIcon = Icons.Outlined.Email,
+                            leadingTint = Highlight, leadingBg = Color(0xFFE6F0FF),
+                            keyboard = KeyboardType.Email,
                             imeAction = ImeAction.Next,
                             enabled = !saving,
+                            isError = emailError != null,
+                            errorText = emailError,
                         )
                     }
-                    FieldRow(
-                        icon = Icons.Outlined.Key, label = "Temporary password", required = true,
-                        errorText = passwordError,
-                        isSuccess = password.length >= 6 && passwordError == null,
-                    ) {
-                        Column {
-                            UnderlinedField(
-                                value = password, onChange = { password = it },
-                                placeholder = "min 6 chars — share with employee",
-                                imeAction = ImeAction.Next,
-                                enabled = !saving,
-                            )
-                            Spacer(Modifier.height(8.dp))
+                    Column {
+                        FieldLabel("Temporary password", required = true)
+                        DottedField(
+                            value = password, onChange = { password = it },
+                            placeholder = "min 6 chars — share with employee",
+                            leadingIcon = Icons.Outlined.Key,
+                            leadingTint = Highlight, leadingBg = Color(0xFFE6F0FF),
+                            imeAction = ImeAction.Next,
+                            enabled = !saving,
+                            isError = passwordError != null,
+                            errorText = passwordError,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFFEEF2FF))
+                                    .clickable(enabled = !saving) {
+                                        password = generateTempPassword()
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
-                                // Generate
-                                Row(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(Color(0xFFEEF2FF))
-                                        .clickable(enabled = !saving) {
-                                            password = generateTempPassword()
-                                        }
-                                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.Refresh,
-                                        contentDescription = "Generate password",
-                                        tint = Highlight,
-                                        modifier = Modifier.size(14.dp),
-                                    )
-                                    Text(
-                                        "Generate", color = Highlight, fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                                // Copy — visible only when password is non-empty
-                                if (password.isNotBlank()) {
-                                    CopyPasswordChip(password = password, enabled = !saving)
-                                }
+                                Icon(
+                                    imageVector = Icons.Outlined.Refresh,
+                                    contentDescription = "Generate password",
+                                    tint = Highlight,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Text(
+                                    "Generate", color = Highlight, fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            if (password.isNotBlank()) {
+                                CopyPasswordChip(password = password, enabled = !saving)
                             }
                         }
                     }
-                    FieldRow(icon = Icons.Outlined.Home, label = "Address") {
-                        UnderlinedField(
+                    Column {
+                        FieldLabel("Address")
+                        DottedField(
                             value = address, onChange = { address = it },
                             placeholder = "House, street, city",
+                            leadingIcon = Icons.Outlined.Home,
+                            leadingTint = Highlight, leadingBg = Color(0xFFE6F0FF),
                             imeAction = ImeAction.Next,
                             enabled = !saving,
                         )
@@ -1134,73 +1150,101 @@ private fun AddEmployeeSheet(
                 }
 
                 // 4. Employment
-                FormSection(emoji = "💼", title = "Employment") {
-                    FieldRow(icon = Icons.Outlined.Badge, label = "Employee ID") {
-                        StaticFieldText(text = "Auto-generated on save", muted = true)
-                    }
-                    FieldRow(
-                        icon = Icons.Outlined.CalendarMonth, label = "Joining date",
-                        onClick = { if (!saving) showJoiningDate = true },
-                        trailing = { TrailingChevron() },
-                    ) {
-                        StaticFieldText(
-                            text = joiningMs?.let(::formatDate) ?: "Tap to pick a date",
-                            muted = joiningMs == null,
+                FormSection(
+                    index = 1,
+                    icon  = Icons.Outlined.Work,
+                    title = "Employment",
+                    tint  = Success,
+                    bg    = SuccessBg,
+                ) {
+                    Column {
+                        FieldLabel("Employee ID")
+                        DottedReadOnly(
+                            value = "Auto-generated on save",
+                            leadingIcon = Icons.Outlined.Badge,
+                            leadingTint = Success, leadingBg = SuccessBg,
+                            hint = "auto",
                         )
                     }
-                    FieldRow(icon = Icons.Outlined.Work, label = "Designation") {
-                        UnderlinedField(
+                    Column {
+                        FieldLabel("Joining date")
+                        DottedClickable(
+                            value = joiningMs?.let(::formatDate) ?: "Tap to pick a date",
+                            muted = joiningMs == null,
+                            leadingIcon = Icons.Outlined.CalendarMonth,
+                            leadingTint = Success, leadingBg = SuccessBg,
+                            enabled = !saving,
+                            onClick = { showJoiningDate = true },
+                        )
+                    }
+                    Column {
+                        FieldLabel("Designation")
+                        DottedField(
                             value = role, onChange = { role = it },
                             placeholder = "e.g. Substation Engineer · L1",
+                            leadingIcon = Icons.Outlined.Work,
+                            leadingTint = Success, leadingBg = SuccessBg,
                             imeAction = ImeAction.Next,
                             enabled = !saving,
                         )
                     }
-                    FieldRow(icon = Icons.Outlined.Apartment, label = "Department") {
-                        UnderlinedField(
+                    Column {
+                        FieldLabel("Department")
+                        DottedField(
                             value = department, onChange = { department = it },
                             placeholder = "Operations / Maintenance / …",
+                            leadingIcon = Icons.Outlined.Apartment,
+                            leadingTint = Success, leadingBg = SuccessBg,
                             imeAction = ImeAction.Next,
                             enabled = !saving,
                         )
                     }
-                    FieldRow(icon = Icons.Outlined.Person, label = "Reporting to") {
-                        UnderlinedField(
+                    Column {
+                        FieldLabel("Reporting to")
+                        DottedField(
                             value = reportingTo, onChange = { reportingTo = it },
                             placeholder = "Manager / Supervisor name",
+                            leadingIcon = Icons.Outlined.Person,
+                            leadingTint = Success, leadingBg = SuccessBg,
                             imeAction = ImeAction.Next,
                             enabled = !saving,
                         )
                     }
-                    FieldRow(icon = Icons.Outlined.Engineering, label = "Employment type") {
+                    Column {
+                        FieldLabel("Employment type")
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             StatusPickChip("Full-time", empType == "Fulltime", { empType = "Fulltime" }, Success, SuccessBg)
                             StatusPickChip("Contract", empType == "Contract", { empType = "Contract" }, Highlight, Color(0xFFE6F0FF))
                         }
                     }
-                    FieldRow(
-                        icon = Icons.Outlined.Payments, label = "Salary (monthly, ₹)",
-                        errorText = salaryError,
-                        isSuccess = salaryStr.isNotBlank() && salaryError == null,
-                    ) {
-                        UnderlinedField(
+                    Column {
+                        FieldLabel("Salary (monthly, ₹)")
+                        DottedField(
                             value = salaryStr,
                             onChange = { salaryStr = it.filter { c -> c.isDigit() || c == '.' } },
                             placeholder = "e.g. 38500",
-                            keyboardType = KeyboardType.Decimal,
-                            imeAction = ImeAction.Done,  // Last field
+                            leadingIcon = Icons.Outlined.Payments,
+                            leadingTint = Success, leadingBg = SuccessBg,
+                            keyboard = KeyboardType.Decimal,
+                            imeAction = ImeAction.Done,
                             enabled = !saving,
+                            isError = salaryError != null,
+                            errorText = salaryError,
                         )
                     }
-                    FieldRow(icon = Icons.Outlined.Place, label = "Zone (optional)") {
-                        UnderlinedField(
+                    Column {
+                        FieldLabel("Zone (optional)")
+                        DottedField(
                             value = zone, onChange = { zone = it },
                             placeholder = "e.g. HSR / Whitefield",
+                            leadingIcon = Icons.Outlined.Place,
+                            leadingTint = Success, leadingBg = SuccessBg,
                             imeAction = ImeAction.Next,
                             enabled = !saving,
                         )
                     }
-                    FieldRow(icon = Icons.Outlined.Flag, label = "Initial status") {
+                    Column {
+                        FieldLabel("Initial status")
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             StatusPickChip("Active", status == "Active", { status = "Active" }, Success, SuccessBg)
                             StatusPickChip("On leave", status == "OnLeave", { status = "OnLeave" }, Leave, LeaveBg)
@@ -1284,27 +1328,44 @@ private fun AddEmployeeSheet(
                 }
 
                 // 5. Emergency Contact
-                FormSection(emoji = "🚨", title = "Emergency Contact") {
-                    FieldRow(icon = Icons.Outlined.Person, label = "Name") {
-                        UnderlinedField(
+                FormSection(
+                    index = 2,
+                    icon  = Icons.Outlined.Favorite,
+                    title = "Emergency Contact",
+                    tint  = Danger,
+                    bg    = Color(0xFFFEE2E2),
+                ) {
+                    Column {
+                        FieldLabel("Name")
+                        DottedField(
                             value = emergencyName, onChange = { emergencyName = it },
                             placeholder = "Contact's full name",
+                            leadingIcon = Icons.Outlined.Person,
+                            leadingTint = Danger, leadingBg = Color(0xFFFEE2E2),
+                            imeAction = ImeAction.Next,
                             enabled = !saving,
                         )
                     }
-                    FieldRow(icon = Icons.Outlined.Favorite, label = "Relation") {
-                        UnderlinedField(
+                    Column {
+                        FieldLabel("Relation")
+                        DottedField(
                             value = emergencyRelation, onChange = { emergencyRelation = it },
                             placeholder = "e.g. Spouse / Parent",
+                            leadingIcon = Icons.Outlined.Favorite,
+                            leadingTint = Danger, leadingBg = Color(0xFFFEE2E2),
+                            imeAction = ImeAction.Next,
                             enabled = !saving,
                         )
                     }
-                    FieldRow(icon = Icons.Outlined.Phone, label = "Contact number") {
-                        UnderlinedField(
+                    Column {
+                        FieldLabel("Contact number")
+                        DottedField(
                             value = emergencyPhone, onChange = { emergencyPhone = it },
                             placeholder = "10-digit mobile",
-                            keyboardType = KeyboardType.Phone,
-                            imeAction = ImeAction.Done,  // Last field
+                            leadingIcon = Icons.Outlined.Phone,
+                            leadingTint = Danger, leadingBg = Color(0xFFFEE2E2),
+                            keyboard = KeyboardType.Phone,
+                            imeAction = ImeAction.Done,
                             enabled = !saving,
                         )
                     }
@@ -1451,7 +1512,9 @@ fun AddEmployeeHeader(
         roundedBottom = false,
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+            modifier = Modifier
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
 
@@ -1654,34 +1717,92 @@ fun ProfileUploadCard(photoUri: String?, onPick: () -> Unit, enabled: Boolean) {
     }
 }
 
-    /** Section card with emoji + title header and slot for fields. */
+    /**
+     * Section card — matches the Task creation screen's accordion style.
+     *
+     *  • SECTION N caps caption above a bold title
+     *  • 36 dp colored rounded-square icon tile (tint over light bg)
+     *  • Hairline divider between header and fields
+     *
+     * Sections in the Add-Employee flow are always expanded — the
+     * collapse/expand chevron from NewTaskScreen is intentionally omitted
+     * so admins never have to chase hidden fields during onboarding.
+     */
     @Composable
     fun FormSection(
-        emoji: String,
+        index: Int,
+        icon: ImageVector,
         title: String,
+        tint: Color,
+        bg: Color,
         content: @Composable ColumnScope.() -> Unit,
     ) {
         Box(modifier = Modifier.padding(horizontal = 16.dp)) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .shadow(elevation = 8.dp, shape = RoundedCornerShape(20.dp), spotColor = ShadowSoft)
+                    .shadow(elevation = 10.dp, shape = RoundedCornerShape(20.dp), spotColor = ShadowSoft)
                     .clip(RoundedCornerShape(20.dp))
                     .background(CardBg)
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                /* Header row — colored icon tile + caps caption + title */
                 Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(emoji, fontSize = 18.sp)
-                    Text(
-                        title, color = InkPrimary, fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(bg),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = tint,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "SECTION ${index + 1}",
+                            color = InkMuted,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.0.sp,
+                        )
+                        Text(
+                            title,
+                            color = InkPrimary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 }
-                content()
+
+                /* Hairline divider */
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(Color(0xFFE2E8F0)),
+                )
+
+                /* Fields */
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    content()
+                }
             }
         }
     }

@@ -9,6 +9,8 @@ import com.example.uniwattelektrik.feature.workforce.data.remote.AttendanceRecor
 import com.example.uniwattelektrik.feature.workforce.data.remote.CheckinPing
 import com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeDraft
 import com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeRecord
+import com.example.uniwattelektrik.feature.workforce.data.remote.MaterialUsedItem
+import com.example.uniwattelektrik.feature.workforce.data.remote.SpareItemRecord
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskNote
 import com.example.uniwattelektrik.feature.workforce.data.remote.WorkforceDirectory
@@ -51,6 +53,11 @@ class WorkforceViewModel(
     private val _checkins = MutableStateFlow<List<CheckinPing>>(emptyList())
     val checkins: StateFlow<List<CheckinPing>> = _checkins.asStateFlow()
 
+    private val _spareItems = MutableStateFlow<List<SpareItemRecord>>(emptyList())
+    val spareItems: StateFlow<List<SpareItemRecord>> = _spareItems.asStateFlow()
+
+    private var spareItemsJob: Job? = null
+
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
@@ -68,6 +75,7 @@ class WorkforceViewModel(
         employeesJob?.cancel()
         tasksJob?.cancel()
         attendanceJob?.cancel()
+        spareItemsJob?.cancel()
         _error.value = null
         _loading.value = true
 
@@ -96,6 +104,11 @@ class WorkforceViewModel(
             .onEach { _checkins.value = it }
             .catch { _error.value = it.message }
             .launchIn(viewModelScope)
+
+        spareItemsJob = directory.observeSpareItems(adminUid)
+            .onEach { _spareItems.value = it }
+            .catch { _error.value = it.message }
+            .launchIn(viewModelScope)
     }
 
     /**
@@ -108,6 +121,7 @@ class WorkforceViewModel(
         employeesJob?.cancel()
         tasksJob?.cancel()
         attendanceJob?.cancel()
+        spareItemsJob?.cancel()
         _error.value = null
         _loading.value = true
 
@@ -122,18 +136,19 @@ class WorkforceViewModel(
             }
             .launchIn(viewModelScope)
 
-        // Subscribe to attendance so the user screen sees its own check-in
-        // record reactively (and so the admin's writes/check-outs are visible).
         if (!adminUid.isNullOrBlank()) {
             attendanceJob = directory.observeAttendance(adminUid)
                 .onEach { _attendance.value = it }
                 .catch { _error.value = it.message }
                 .launchIn(viewModelScope)
 
-            // Also subscribe to employees so the user screen can read its own
-            // profile (shift, name, etc.) for shift countdowns.
             employeesJob = directory.observeEmployees(adminUid)
                 .onEach { _employees.value = it }
+                .catch { _error.value = it.message }
+                .launchIn(viewModelScope)
+
+            spareItemsJob = directory.observeSpareItems(adminUid)
+                .onEach { _spareItems.value = it }
                 .catch { _error.value = it.message }
                 .launchIn(viewModelScope)
         }
@@ -256,6 +271,7 @@ class WorkforceViewModel(
         time: String,
         day: String,
         priority: String,
+        description: String = "",
         departmentId: String = "",
         departmentName: String = "",
         equipmentId: String = "",
@@ -273,9 +289,51 @@ class WorkforceViewModel(
             runCatching {
                 directory.addTask(
                     adminUid, userId, title, location, time, day, priority,
+                    description,
                     departmentId, departmentName, equipmentId, equipmentName,
                     checklist, attachments, address, latitude, longitude,
                     dueDate, ownerAdminName, assigneeName,
+                )
+            }.onFailure { _error.value = it.message }
+        }
+    }
+
+    /**
+     * Update an existing task. Mirrors [addTask] but writes via
+     * [WorkforceDirectory.updateTask] which preserves lifecycle fields
+     * (createdAt / acceptedAt / completedAt) and rebalances `tasksOpen`
+     * counters when the assignee changes.
+     */
+    fun updateTask(
+        taskId: String,
+        adminUid: String,
+        userId: String?,
+        title: String,
+        location: String,
+        time: String,
+        day: String,
+        priority: String,
+        description: String = "",
+        departmentId: String = "",
+        departmentName: String = "",
+        equipmentId: String = "",
+        equipmentName: String = "",
+        checklist: List<com.example.uniwattelektrik.feature.workforce.data.remote.ChecklistItem> = emptyList(),
+        attachments: List<String> = emptyList(),
+        address: String = "",
+        latitude: Double? = null,
+        longitude: Double? = null,
+        dueDate: Long? = null,
+        assigneeName: String = "",
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                directory.updateTask(
+                    taskId, adminUid, userId, title, location, time, day, priority,
+                    description,
+                    departmentId, departmentName, equipmentId, equipmentName,
+                    checklist, attachments, address, latitude, longitude,
+                    dueDate, assigneeName,
                 )
             }.onFailure { _error.value = it.message }
         }
@@ -300,6 +358,31 @@ class WorkforceViewModel(
                     AppLog.w("WorkforceVM", "completeTask failed: ${it.message}")
                     _error.value = it.message
                 }
+        }
+    }
+
+    fun completeTaskWithSignoff(
+        adminId: String,
+        taskId: String,
+        assignedUserId: String,
+        signoffDescription: String,
+        downtimeMinutes: Int,
+        rca: String,
+        materialsUsed: List<MaterialUsedItem>,
+        startTimeMs: Long,
+        endTimeMs: Long,
+        onDone: (Result<TaskRecord>) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            val result = runCatching {
+                directory.completeTaskWithSignoff(
+                    adminId, taskId, assignedUserId,
+                    signoffDescription, downtimeMinutes, rca,
+                    materialsUsed, startTimeMs, endTimeMs,
+                )
+            }
+            result.onFailure { AppLog.w("WorkforceVM", "completeTaskWithSignoff failed: ${it.message}") }
+            onDone(result)
         }
     }
 

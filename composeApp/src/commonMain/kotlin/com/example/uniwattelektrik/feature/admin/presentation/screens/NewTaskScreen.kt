@@ -141,15 +141,29 @@ fun NewTaskScreen(
     onBack: () -> Unit,
     onCreated: () -> Unit,
     adminDisplayName: String = "",
+    /**
+     * When non-null, the form prefills from the matching live [TaskRecord]
+     * and saves via `updateTask` instead of `addTask`. The bottom action
+     * label flips to "Update →" automatically.
+     */
+    editTaskId: String? = null,
 ) {
     val employees by workforceVm.employees.collectAsStateWithLifecycle()
     val departments by inventoryVm.departments.collectAsStateWithLifecycle()
     val equipmentAll by inventoryVm.equipment.collectAsStateWithLifecycle()
+    val liveTasks by workforceVm.tasks.collectAsStateWithLifecycle()
+    val isEditing = editTaskId != null
+    val editing = remember(editTaskId, liveTasks) {
+        editTaskId?.let { id -> liveTasks.firstOrNull { it.id == id } }
+    }
 
     com.example.uniwattelektrik.core.theme.SetStatusBar(color = Brand, darkIcons = false)
 
     /* ── Section 1: Overview ────────────────────────────────────────── */
-    val taskId = remember { autoTaskId() }
+    val taskId = remember(editing?.id) {
+        editing?.let { "TASK-${(it.id.hashCode() and 0x7FFFFFFF).toString().padStart(5, '0').take(5)}" }
+            ?: autoTaskId()
+    }
     var title       by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
 
@@ -244,6 +258,44 @@ fun NewTaskScreen(
     /* ── Accordion expansion state ────────────────────────────────── */
     val expanded = remember { androidx.compose.runtime.mutableStateMapOf<Int, Boolean>(0 to true) }
 
+    /* ── Edit-mode prefill ─────────────────────────────────────────── *
+     * Runs once per [editing.id]: copies every field from the existing
+     * [TaskRecord] into the local form state. Subsequent edits to a
+     * field are user-driven — we never overwrite again.
+     */
+    var prefilled by remember(editing?.id) { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(editing?.id) {
+        val src = editing ?: return@LaunchedEffect
+        if (prefilled) return@LaunchedEffect
+        title       = src.title
+        description = src.description
+        priority    = when (src.priority.lowercase()) {
+            "low"  -> "Low"
+            "high" -> "High"
+            else   -> "Medium"
+        }
+        location    = src.address.ifBlank { src.location }
+        resolvedLat = src.latitude
+        resolvedLng = src.longitude
+        selectedDeptId  = src.departmentId.takeIf { it.isNotBlank() }
+        selectedEquipId = src.equipmentId.takeIf { it.isNotBlank() }
+        if (src.userId != null) {
+            selectedAssignees.clear()
+            selectedAssignees.add(src.userId)
+        }
+        checklist.clear()
+        checklist.addAll(src.checklist.map { it.text })
+        attachments.clear()
+        attachments.addAll(src.attachments)
+        endDateMs = src.dueDate
+        // Best-effort time decode from the stored "HH:mm" field.
+        src.time.split(":").let { parts ->
+            parts.getOrNull(0)?.toIntOrNull()?.let { endHour = it }
+            parts.getOrNull(1)?.toIntOrNull()?.let { endMinute = it }
+        }
+        prefilled = true
+    }
+
     val canSubmit = title.isNotBlank() && location.isNotBlank() &&
                     selectedAssignees.isNotEmpty()
 
@@ -260,7 +312,7 @@ fun NewTaskScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item {
-                GradientHeader(taskId = taskId, onBack = onBack)
+                GradientHeader(taskId = taskId, onBack = onBack, isEditing = isEditing)
                 Spacer(Modifier.height(12.dp))
             }
 
@@ -638,6 +690,7 @@ fun NewTaskScreen(
         /* ── Sticky bottom action bar ───────────────────────────────── */
         BottomActions(
             canSubmit = canSubmit,
+            isEditing = isEditing,
             onSaveDraft = { /* TODO: persist draft locally */ },
             onPreview   = { /* TODO: full-screen preview */ },
             onCreate    = {
@@ -647,29 +700,57 @@ fun NewTaskScreen(
                     }
                     val assigneeId = selectedAssignees.firstOrNull()
                     val assigneeName = employees.firstOrNull { it.id == assigneeId }?.name.orEmpty()
-                    workforceVm.addTask(
-                        adminUid       = adminUid,
-                        userId         = assigneeId,
-                        title          = title.trim(),
-                        location       = location.trim(),
-                        time           = endTimeStr,
-                        day            = endDayLbl,
-                        priority       = priority,
-                        departmentId   = selectedDeptId.orEmpty(),
-                        departmentName = selectedDept?.name.orEmpty(),
-                        equipmentId    = selectedEquipId.orEmpty(),
-                        equipmentName  = selectedEquip?.name.orEmpty(),
-                        checklist      = checklist.map {
-                            com.example.uniwattelektrik.feature.workforce.data.remote.ChecklistItem(text = it)
-                        },
-                        attachments    = attachments.toList(),
-                        address        = location.trim(),
-                        latitude       = resolvedLat,
-                        longitude      = resolvedLng,
-                        dueDate        = dueDateMs,
-                        ownerAdminName = adminDisplayName,
-                        assigneeName   = assigneeName,
-                    )
+                    if (isEditing && editTaskId != null) {
+                        workforceVm.updateTask(
+                            taskId         = editTaskId,
+                            adminUid       = adminUid,
+                            userId         = assigneeId,
+                            title          = title.trim(),
+                            location       = location.trim(),
+                            time           = endTimeStr,
+                            day            = endDayLbl,
+                            priority       = priority,
+                            description    = description.trim(),
+                            departmentId   = selectedDeptId.orEmpty(),
+                            departmentName = selectedDept?.name.orEmpty(),
+                            equipmentId    = selectedEquipId.orEmpty(),
+                            equipmentName  = selectedEquip?.name.orEmpty(),
+                            checklist      = checklist.map {
+                                com.example.uniwattelektrik.feature.workforce.data.remote.ChecklistItem(text = it)
+                            },
+                            attachments    = attachments.toList(),
+                            address        = location.trim(),
+                            latitude       = resolvedLat,
+                            longitude      = resolvedLng,
+                            dueDate        = dueDateMs,
+                            assigneeName   = assigneeName,
+                        )
+                    } else {
+                        workforceVm.addTask(
+                            adminUid       = adminUid,
+                            userId         = assigneeId,
+                            title          = title.trim(),
+                            location       = location.trim(),
+                            time           = endTimeStr,
+                            day            = endDayLbl,
+                            priority       = priority,
+                            description    = description.trim(),
+                            departmentId   = selectedDeptId.orEmpty(),
+                            departmentName = selectedDept?.name.orEmpty(),
+                            equipmentId    = selectedEquipId.orEmpty(),
+                            equipmentName  = selectedEquip?.name.orEmpty(),
+                            checklist      = checklist.map {
+                                com.example.uniwattelektrik.feature.workforce.data.remote.ChecklistItem(text = it)
+                            },
+                            attachments    = attachments.toList(),
+                            address        = location.trim(),
+                            latitude       = resolvedLat,
+                            longitude      = resolvedLng,
+                            dueDate        = dueDateMs,
+                            ownerAdminName = adminDisplayName,
+                            assigneeName   = assigneeName,
+                        )
+                    }
                     onCreated()
                 }
             },
@@ -791,7 +872,7 @@ fun NewTaskScreen(
  * ─────────────────────────────────────────────────────────────────────── */
 
 @Composable
-private fun GradientHeader(taskId: String, onBack: () -> Unit) {
+private fun GradientHeader(taskId: String, onBack: () -> Unit, isEditing: Boolean = false) {
     com.example.uniwattelektrik.core.components.PremiumHeaderBackground(
         roundedBottom = false,
     ) {
@@ -807,9 +888,9 @@ private fun GradientHeader(taskId: String, onBack: () -> Unit) {
 
                 Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("New Task", color = Color.White,
+                    Text(if (isEditing) "Edit Task" else "New Task", color = Color.White,
                          fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text("ADVANCED · 7 SECTIONS",
+                    Text(if (isEditing) "UPDATE EXISTING TASK" else "ADVANCED · 7 SECTIONS",
                          color = Color(0xCCFFFFFF), fontSize = 11.sp,
                          fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp)
                 }
@@ -1397,6 +1478,7 @@ private fun BottomActions(
     onPreview: () -> Unit,
     onCreate: () -> Unit,
     modifier: Modifier = Modifier,
+    isEditing: Boolean = false,
 ) {
     Row(
         modifier = modifier
@@ -1422,7 +1504,8 @@ private fun BottomActions(
                 .clickable(enabled = canSubmit, onClick = onCreate),
             contentAlignment = Alignment.Center,
         ) {
-            Text("Create →", color = Color.White, fontSize = 14.sp,
+            Text(if (isEditing) "Update →" else "Create →",
+                 color = Color.White, fontSize = 14.sp,
                  fontWeight = FontWeight.Bold)
         }
     }

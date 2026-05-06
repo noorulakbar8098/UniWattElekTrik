@@ -185,12 +185,7 @@ fun AdminAttendanceScreen(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
 
-                        // Back button — shared GlassBackButton
-                        com.example.uniwattelektrik.core.components.GlassBackButton(
-                            onClick = onBack,
-                        )
-
-                        Spacer(Modifier.width(14.dp))
+                        // Back button hidden — Attendance & GPS is a top-level tab.
 
                         // Titles
                         Column(modifier = Modifier.weight(1f)) {

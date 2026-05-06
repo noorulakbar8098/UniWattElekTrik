@@ -35,6 +35,7 @@ import com.example.uniwattelektrik.feature.user.presentation.screens.ProfileScre
 import com.example.uniwattelektrik.feature.user.presentation.screens.CompleteWorkScreen
 import com.example.uniwattelektrik.feature.user.presentation.screens.TaskDetailScreen
 import com.example.uniwattelektrik.feature.user.presentation.screens.TaskListScreen
+import com.example.uniwattelektrik.platform.PlatformBackHandler
 
 /**
  * Top-level container for the Employee app. Owns the [UserNavigator] and
@@ -73,6 +74,14 @@ fun UserShell(
             // letting `SetStatusBar(color)` paint the gradient under the clock.
             .windowInsetsPadding(WindowInsets.navigationBars),
     ) {
+        // ── System back navigation ─────────────────────────────────────────
+        // Priority: pop the in-memory stack first; if we're already on a
+        // top-level tab that isn't Home, route to Home; if we're on Home,
+        // disable the handler and let the OS finish the Activity.
+        PlatformBackHandler(enabled = current != UserRoute.Home) {
+            if (!nav.pop()) nav.selectTab(UserRoute.Home)
+        }
+
         // ── Active screen ──────────────────────────────────────────────────
         when (val r = current) {
             UserRoute.Home -> HomeScreen(
@@ -106,6 +115,9 @@ fun UserShell(
             )
             is UserRoute.WorkCompletion -> CompleteWorkScreen(
                 taskId      = r.taskId,
+                adminId     = user.parentAdminId ?: "",
+                userId      = user.id,
+                workforceVm = workforceVm,
                 onClose     = { nav.pop() },
                 onSubmitted = { nav.selectTab(UserRoute.Home) },
             )

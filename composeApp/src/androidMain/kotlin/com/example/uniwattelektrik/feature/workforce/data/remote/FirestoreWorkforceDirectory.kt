@@ -283,6 +283,7 @@ class FirestoreWorkforceDirectory(
         time: String,
         day: String,
         priority: String,
+        description: String,
         departmentId: String,
         departmentName: String,
         equipmentId: String,
@@ -305,7 +306,7 @@ class FirestoreWorkforceDirectory(
             "assignedUserId" to userId,
             "assigneeName"   to assigneeName,
             "title"          to title,
-            "description"    to "",
+            "description"    to description,
             "priority"       to priority.lowercase(),
             "status"         to "pending",
             "location"       to location,
@@ -343,6 +344,7 @@ class FirestoreWorkforceDirectory(
             adminId        = adminId,
             userId         = userId,
             title          = title,
+            description    = description,
             location       = location,
             time           = time,
             day            = day,
@@ -379,6 +381,78 @@ class FirestoreWorkforceDirectory(
         lat?.let { updates["acceptedLat"] = it }
         lon?.let { updates["acceptedLon"] = it }
         ref.update(updates).awaitBounded()
+        return toTask(ref.get().awaitBounded())
+    }
+
+    override suspend fun updateTask(
+        taskId: String,
+        adminId: String,
+        userId: String?,
+        title: String,
+        location: String,
+        time: String,
+        day: String,
+        priority: String,
+        description: String,
+        departmentId: String,
+        departmentName: String,
+        equipmentId: String,
+        equipmentName: String,
+        checklist: List<ChecklistItem>,
+        attachments: List<String>,
+        address: String,
+        latitude: Double?,
+        longitude: Double?,
+        dueDate: Long?,
+        assigneeName: String,
+    ): TaskRecord {
+        val ref = firestore.collection(COL_TASKS).document(taskId)
+        AppLog.i("PATH", "update $COL_TASKS/$taskId")
+
+        // Read existing doc to detect assignee changes for tasksOpen rebalance.
+        val before = runCatching { ref.get().awaitBounded() }.getOrNull()
+        val prevUserId = before?.getString("assignedUserId")
+        val prevStatus = before?.getString("status") ?: "pending"
+        val isOpen = prevStatus.lowercase() != "completed" && prevStatus.lowercase() != "done"
+
+        ref.update(mapOf(
+            "assignedUserId" to userId,
+            "assigneeName"   to assigneeName,
+            "title"          to title,
+            "description"    to description,
+            "priority"       to priority.lowercase(),
+            "location"       to location,
+            "time"           to time,
+            "day"            to day,
+            "dueDate"        to dueDate?.let { Timestamp(java.util.Date(it)) },
+            "departmentId"   to departmentId,
+            "departmentName" to departmentName,
+            "equipmentId"    to equipmentId,
+            "equipmentName"  to equipmentName,
+            "checklist"      to checklist.map { mapOf("text" to it.text, "done" to it.done) },
+            "attachments"    to attachments,
+            "address"        to address,
+            "latitude"       to latitude,
+            "longitude"      to longitude,
+            "updatedAt"      to FieldValue.serverTimestamp(),
+        )).awaitBounded()
+
+        // Rebalance tasksOpen if assignee changed and the task is still open.
+        if (isOpen && prevUserId != userId) {
+            if (!prevUserId.isNullOrBlank()) {
+                runCatching {
+                    firestore.collection(COL_USERS).document(prevUserId)
+                        .update("tasksOpen", FieldValue.increment(-1)).awaitBounded()
+                }.onFailure { AppLog.w("PATH", "tasksOpen-- failed: ${it.message}") }
+            }
+            if (!userId.isNullOrBlank()) {
+                runCatching {
+                    firestore.collection(COL_USERS).document(userId)
+                        .update("tasksOpen", FieldValue.increment(1)).awaitBounded()
+                }.onFailure { AppLog.w("PATH", "tasksOpen++ failed: ${it.message}") }
+            }
+        }
+
         return toTask(ref.get().awaitBounded())
     }
 
@@ -475,6 +549,72 @@ class FirestoreWorkforceDirectory(
         return toTask(ref.get().awaitBounded())
     }
 
+    override suspend fun completeTaskWithSignoff(
+        adminId: String,
+        taskId: String,
+        assignedUserId: String?,
+        signoffDescription: String,
+        downtimeMinutes: Int,
+        rca: String,
+        materialsUsed: List<MaterialUsedItem>,
+        startTimeMs: Long?,
+        endTimeMs: Long,
+    ): TaskRecord {
+        val totalWorkDurationMs = if (startTimeMs != null && startTimeMs > 0L)
+            (endTimeMs - startTimeMs).coerceAtLeast(0L) else null
+
+        val ref = firestore.collection(COL_TASKS).document(taskId)
+        val updates = mutableMapOf<String, Any?>(
+            "status"               to "completed",
+            "completedAt"          to FieldValue.serverTimestamp(),
+            "updatedAt"            to FieldValue.serverTimestamp(),
+            "signoffDescription"   to signoffDescription,
+            "downtimeMinutes"      to downtimeMinutes,
+            "rca"                  to rca,
+            "totalWorkDurationMs"  to totalWorkDurationMs,
+            "materialsUsed"        to materialsUsed.map {
+                mapOf("itemId" to it.itemId, "itemName" to it.itemName, "quantity" to it.quantity)
+            },
+        )
+        ref.update(updates).awaitBounded()
+
+        // Deduct inventory and record transactions (non-fatal — don't block completion)
+        materialsUsed.filter { it.quantity > 0 }.forEach { used ->
+            runCatching {
+                firestore.collection(COL_SPARE_ITEMS).document(used.itemId)
+                    .update("stockQty", FieldValue.increment(-used.quantity.toLong()))
+                    .awaitBounded()
+                // Log the transaction so the admin can see what was consumed
+                val txRef = firestore.collection(COL_INVENTORY_TRANSACTIONS).document()
+                txRef.set(mapOf(
+                    "adminId"   to adminId,
+                    "userId"    to (assignedUserId ?: ""),
+                    "itemId"    to used.itemId,
+                    "itemName"  to used.itemName,
+                    "type"      to "issue",
+                    "quantity"  to used.quantity,
+                    "taskId"    to taskId,
+                    "createdAt" to FieldValue.serverTimestamp(),
+                )).awaitBounded()
+            }.onFailure {
+                AppLog.w("PATH", "inventory deduction failed for ${used.itemId}: ${it.message}")
+            }
+        }
+
+        // Decrement tasksOpen counter
+        if (!assignedUserId.isNullOrBlank()) {
+            runCatching {
+                firestore.collection(COL_USERS).document(assignedUserId)
+                    .update("tasksOpen", FieldValue.increment(-1))
+                    .awaitBounded()
+            }.onFailure {
+                AppLog.w("PATH", "tasksOpen decrement failed (non-fatal): ${it.message}")
+            }
+        }
+
+        return toTask(ref.get().awaitBounded())
+    }
+
     override suspend fun setChecklistItemDone(
         taskId: String,
         index: Int,
@@ -530,6 +670,7 @@ class FirestoreWorkforceDirectory(
             adminId          = d.getString("adminId") ?: "",
             userId           = d.getString("assignedUserId"),
             title            = d.getString("title") ?: "—",
+            description      = d.getString("description") ?: "",
             location         = d.getString("location") ?: "—",
             time             = d.getString("time") ?: "",
             day              = d.getString("day") ?: "Today",
@@ -561,6 +702,19 @@ class FirestoreWorkforceDirectory(
             address          = d.getString("address") ?: "",
             latitude         = d.getDouble("latitude"),
             longitude        = d.getDouble("longitude"),
+            signoffDescription  = d.getString("signoffDescription") ?: "",
+            downtimeMinutes     = (d.getLong("downtimeMinutes") ?: 0L).toInt(),
+            rca                 = d.getString("rca") ?: "",
+            totalWorkDurationMs = d.getLong("totalWorkDurationMs"),
+            materialsUsed       = @Suppress("UNCHECKED_CAST")
+                (d.get("materialsUsed") as? List<Map<String, Any?>>)
+                    ?.map { m ->
+                        MaterialUsedItem(
+                            itemId   = m["itemId"]   as? String ?: "",
+                            itemName = m["itemName"] as? String ?: "",
+                            quantity = (m["quantity"] as? Long)?.toInt() ?: 0,
+                        )
+                    } ?: emptyList(),
         )
     }
 

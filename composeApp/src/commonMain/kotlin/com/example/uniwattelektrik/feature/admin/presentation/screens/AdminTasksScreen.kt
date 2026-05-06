@@ -44,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
@@ -95,6 +96,15 @@ fun AdminTasksScreen(
     modifier: Modifier = Modifier,
 ) {
     val tasks by workforceVm.tasks.collectAsStateWithLifecycle()
+    val employees by workforceVm.employees.collectAsStateWithLifecycle()
+
+    /**
+     * Build a fast id → EmployeeRecord lookup so the task list can resolve
+     * each `assignedUserId` (stored on [TaskRecord.userId]) to the live
+     * employee profile (name + initials). Recomputes only when the employee
+     * list itself changes.
+     */
+    val employeeById = remember(employees) { employees.associateBy { it.id } }
 
     val todo       = tasks.filter { it.status == "Todo" }
     val inProgress = tasks.filter { it.status == "InProgress" }
@@ -132,7 +142,13 @@ fun AdminTasksScreen(
                         dotColor = InkMuted,
                         count = todo.size,
                         tasks = todo,
-                        renderCard = { TaskCard(task = it, onClick = { onTaskClick(it.id) }) },
+                        renderCard = {
+                            TaskCard(
+                                task = it,
+                                resolvedAssigneeName = employeeById[it.userId]?.name,
+                                onClick = { onTaskClick(it.id) },
+                            )
+                        },
                     )
                 }
                 item {
@@ -141,8 +157,14 @@ fun AdminTasksScreen(
                         dotColor = Brand,
                         count = inProgress.size,
                         tasks = inProgress,
-                        renderCard = { TaskCard(task = it, showProgress = true,
-                                                onClick = { onTaskClick(it.id) }) },
+                        renderCard = {
+                            TaskCard(
+                                task = it,
+                                showProgress = true,
+                                resolvedAssigneeName = employeeById[it.userId]?.name,
+                                onClick = { onTaskClick(it.id) },
+                            )
+                        },
                     )
                 }
                 item {
@@ -151,8 +173,14 @@ fun AdminTasksScreen(
                         dotColor = Success,
                         count = done.size,
                         tasks = done,
-                        renderCard = { TaskCard(task = it, completed = true,
-                                                onClick = { onTaskClick(it.id) }) },
+                        renderCard = {
+                            TaskCard(
+                                task = it,
+                                completed = true,
+                                resolvedAssigneeName = employeeById[it.userId]?.name,
+                                onClick = { onTaskClick(it.id) },
+                            )
+                        },
                     )
                 }
             }
@@ -200,11 +228,7 @@ private fun GradientHeader(
                 .padding(horizontal = 18.dp, vertical = 16.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                /* Back */
-                com.example.uniwattelektrik.core.components.GlassBackButton(
-                    onClick = onBack,
-                )
-                Spacer(Modifier.width(14.dp))
+                // Back button hidden — Task Management is a top-level tab.
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Task Management", style = AppTypography.HeaderTitle)
                     Spacer(Modifier.height(2.dp))
@@ -227,34 +251,6 @@ private fun GradientHeader(
                         )
                     }
                 }
-                /* Dropdown affordance (decorative) */
-                GlassButton(
-                    onClick = {},
-                    bg = Color.White.copy(alpha = 0.95f),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.ArrowDropDown,
-                        contentDescription = null,
-                        tint = BrandDeep,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(14.dp))
-
-            /* Filter pills */
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                FilterPill(
-                    label = "All teams",
-                    modifier = Modifier.weight(1f),
-                    bg = Color.White.copy(alpha = 0.18f),
-                )
-                FilterPill(
-                    label = "Today",
-                    modifier = Modifier.weight(0.55f),
-                    bg = Color.White.copy(alpha = 0.10f),
-                )
             }
         }
     }
@@ -373,7 +369,7 @@ private fun KanbanColumn(
 }
 
 /* ─────────────────────────────────────────────────────────────────────── *
- *  TASK CARD
+ *  TASK CARD — premium SaaS-level
  * ─────────────────────────────────────────────────────────────────────── */
 
 @Composable
@@ -381,106 +377,221 @@ private fun TaskCard(
     task: TaskRecord,
     showProgress: Boolean = false,
     completed: Boolean = false,
+    resolvedAssigneeName: String? = null,
     onClick: () -> Unit = {},
 ) {
     val accent = priorityAccent(task.priority)
     val pNorm  = priorityLabel(task.priority)
+    // Live name from the employees flow takes precedence; fall back to whatever
+    // was denormalised on the task document at creation time, then "Unassigned".
+    val displayName = (resolvedAssigneeName?.takeIf { it.isNotBlank() }
+        ?: task.assigneeName.takeIf { it.isNotBlank() }
+        ?: "Unassigned")
+    val avatarLetters = task.deriveAvatarLetters(displayName)
 
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(IntrinsicSize.Min)
-            .shadow(8.dp, RoundedCornerShape(16.dp), spotColor = ShadowSoft)
-            .clip(RoundedCornerShape(16.dp))
+            .shadow(
+                elevation = 14.dp,
+                shape = RoundedCornerShape(20.dp),
+                spotColor = accent.copy(alpha = 0.18f),
+                ambientColor = Color.Transparent,
+            )
+            .clip(RoundedCornerShape(20.dp))
             .background(CardBg)
             .clickable(onClick = onClick),
     ) {
-        /* Left colored strip — spans full card height */
+        // Subtle accent wash in the top-right corner for premium depth
         Box(
             modifier = Modifier
-                .width(4.dp)
-                .fillMaxHeight()
-                .background(accent),
+                .matchParentSize()
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            accent.copy(alpha = 0.06f),
+                            Color.Transparent,
+                        ),
+                        start = Offset(Float.POSITIVE_INFINITY, 0f),
+                        end = Offset(0f, Float.POSITIVE_INFINITY),
+                    ),
+                ),
         )
 
-        Column(modifier = Modifier
-            .weight(1f)
-            .padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 14.dp)) {
-            /* Title row + warning icon for High priority In-Progress */
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (showProgress && task.priority.equals("High", true)) {
-                    Icon(
-                        imageVector = Icons.Filled.Warning,
-                        contentDescription = null,
-                        tint = Danger,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                }
-                Text(
-                    task.title,
-                    color = InkPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-
-            Spacer(Modifier.height(4.dp))
-            Text(
-                taskCode(task) + locationSuffix(task),
-                color = InkMuted,
-                fontSize = 12.sp,
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min),
+        ) {
+            /* Left colored strip — spans full card height */
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(
+                        Brush.verticalGradient(listOf(accent, accent.copy(alpha = 0.55f))),
+                    ),
             )
 
-            if (showProgress) {
-                Spacer(Modifier.height(10.dp))
-                ProgressBar(
-                    fraction = progressFractionFor(task),
-                    tint = accent,
-                )
-            }
-
-            Spacer(Modifier.height(12.dp))
-            DashedDivider()
-            Spacer(Modifier.height(12.dp))
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                AvatarBubble(initials = task.assigneeInitials.ifBlank { "??" })
-                Spacer(Modifier.width(10.dp))
-
-                if (completed) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Filled.Check,
-                            contentDescription = null,
-                            tint = Success,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(Modifier.width(4.dp))
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 14.dp),
+            ) {
+                /* ── Top row: code chip · priority chip · due ───────────── */
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(accent.copy(alpha = 0.10f))
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                    ) {
                         Text(
-                            "Completed",
-                            color = Success,
-                            fontSize = 12.sp,
+                            taskCode(task),
+                            color = accent,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.6.sp,
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    if (!completed) {
+                        PriorityChip(label = pNorm.uppercase(), tint = accent)
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = null,
+                                tint = Success,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "DONE",
+                                color = Success,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.8.sp,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        formatDueShort(task),
+                        color = if (showProgress && task.priority.equals("High", true)) Danger
+                                else InkSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                /* ── Title row + warning icon for High-priority In-Progress ── */
+                Row(verticalAlignment = Alignment.Top) {
+                    if (showProgress && task.priority.equals("High", true)) {
+                        Icon(
+                            imageVector = Icons.Filled.Warning,
+                            contentDescription = null,
+                            tint = Danger,
+                            modifier = Modifier
+                                .size(18.dp)
+                                .padding(top = 2.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(
+                        task.title,
+                        color = InkPrimary,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        lineHeight = 20.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                /* ── Optional subtitle line: location ─────────────────── */
+                val sub = locationSuffix(task).removePrefix(" · ").removePrefix("·").trim()
+                if (sub.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        sub,
+                        color = InkMuted,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                if (showProgress) {
+                    Spacer(Modifier.height(12.dp))
+                    val frac = progressFractionFor(task)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        ProgressBar(
+                            fraction = frac,
+                            tint = accent,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "${(frac * 100).toInt()}%",
+                            color = accent,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                         )
                     }
-                } else {
-                    PriorityChip(label = pNorm.uppercase(), tint = accent)
                 }
 
-                Spacer(Modifier.weight(1f))
-                Text(
-                    formatDueShort(task),
-                    color = if (showProgress && task.priority.equals("High", true)) Danger
-                            else InkPrimary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
+//                Spacer(Modifier.height(14.dp))
+
+                /* ── Footer: avatar + assignee name ─────────────────── */
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AvatarBubble(initials = avatarLetters)
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(.5f)) {
+                        Text(
+                            displayName,
+                            color = InkPrimary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            "Assignee",
+                            color = InkMuted,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            letterSpacing = 0.6.sp,
+                        )
+                    }
+                }
             }
         }
+    }
+}
+
+/**
+ * Resolve the 1–2 character avatar token for a task.
+ *
+ * Order of precedence:
+ *  1. Stored [TaskRecord.assigneeInitials] (already uppercase, max 2 chars)
+ *  2. First letters of the live [overrideName] (resolved via assignedUserId)
+ *  3. First letters of [TaskRecord.assigneeName] (e.g. "Ravi Kumar" → "RK")
+ *  4. First letter only (e.g. "Ravi" → "R")
+ *  5. "?" — never blank.
+ */
+private fun TaskRecord.deriveAvatarLetters(overrideName: String? = null): String {
+    val stored = assigneeInitials.trim()
+    if (stored.isNotBlank()) return stored.take(2).uppercase()
+    val source = overrideName?.takeIf { it.isNotBlank() } ?: assigneeName
+    val parts = source.trim().split(' ', '\t').filter { it.isNotBlank() }
+    return when {
+        parts.size >= 2 -> "${parts[0].first()}${parts[1].first()}".uppercase()
+        parts.size == 1 -> parts[0].first().uppercase().toString()
+        else            -> "?"
     }
 }
 
@@ -515,35 +626,38 @@ private fun AvatarBubble(initials: String) {
     val gradient = avatarGradientFor(initials)
     Box(
         modifier = Modifier
-            .size(34.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(Brush.linearGradient(gradient)),
+            .size(36.dp)
+            .shadow(6.dp, CircleShape, spotColor = Color(0x33172C50))
+            .clip(CircleShape)
+            .background(Brush.linearGradient(gradient))
+            .border(1.5.dp, Color.White, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             initials.take(2).uppercase(),
             color = Color.White,
-            fontSize = 11.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
+            letterSpacing = 0.4.sp,
         )
     }
 }
 
 @Composable
-private fun ProgressBar(fraction: Float, tint: Color) {
+private fun ProgressBar(fraction: Float, tint: Color, modifier: Modifier = Modifier) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .height(5.dp)
+            .height(6.dp)
             .clip(RoundedCornerShape(50))
             .background(Color(0xFFE2E8F0)),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                .height(5.dp)
+                .height(6.dp)
                 .clip(RoundedCornerShape(50))
-                .background(tint),
+                .background(Brush.horizontalGradient(listOf(tint.copy(alpha = 0.85f), tint))),
         )
     }
 }

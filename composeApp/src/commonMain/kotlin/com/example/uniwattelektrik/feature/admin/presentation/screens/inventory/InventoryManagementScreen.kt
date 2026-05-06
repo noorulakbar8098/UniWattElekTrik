@@ -47,7 +47,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.uniwattelektrik.core.components.PremiumHeaderBackground
+import com.example.uniwattelektrik.core.components.InventoryScreenHeader
 import com.example.uniwattelektrik.core.components.PremiumHeaderStatusBarColor
 import com.example.uniwattelektrik.core.theme.AppTheme
 import com.example.uniwattelektrik.core.theme.SetStatusBar
@@ -91,35 +91,11 @@ fun InventoryManagementScreen(
     )
 
     Column(modifier = modifier.fillMaxSize().background(appScreenBackground())) {
-        // ── Header ───────────────────────────────────────────────────────────
-        PremiumHeaderBackground(
-            modifier = Modifier.shadow(12.dp, RoundedCornerShape(bottomStart = 32.dp, bottomEnd = 32.dp))
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(horizontal = 22.dp)
-                    .padding(top = 16.dp, bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color.White.copy(alpha = 0.15f))
-                        .premiumPress(onClick = onBack),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(20.dp))
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Inventory Management", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
-                    Text("Manage departments, equipment & pricing", color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp)
-                }
-            }
-        }
+        InventoryScreenHeader(
+            title = "Inventory Management",
+            subtitle = "MANAGE DEPARTMENTS, EQUIPMENT & PRICING",
+            onBack = onBack,
+        )
 
         LazyColumn(
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),

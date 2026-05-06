@@ -59,7 +59,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.uniwattelektrik.core.components.EmptyState
-import com.example.uniwattelektrik.core.components.PremiumHeaderBackground
+import com.example.uniwattelektrik.core.components.InventoryScreenHeader
+import com.example.uniwattelektrik.core.components.PremiumGradientFab
 import com.example.uniwattelektrik.core.components.PremiumHeaderStatusBarColor
 import com.example.uniwattelektrik.core.theme.AppTheme
 import com.example.uniwattelektrik.core.theme.SetStatusBar
@@ -132,53 +133,11 @@ fun PriceListScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = modifier.fillMaxSize().background(appScreenBackground())) {
 
-            // ── Premium Gradient Header ─────────────────────────────────────────
-            PremiumHeaderBackground(
-                modifier = Modifier.shadow(12.dp, RoundedCornerShape(bottomStart = 32.dp, bottomEnd = 32.dp))
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .windowInsetsPadding(WindowInsets.statusBars)
-                        .padding(horizontal = 22.dp)
-                        .padding(top = 16.dp, bottom = 32.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp)
-                ) {
-                    // Back button
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(Color.White.copy(alpha = 0.15f))
-                            .clickable(onClick = onBack),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            text = "Price List",
-                            color = Color.White,
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = (-0.5).sp
-                        )
-                        Text(
-                            text = "MASTER PRICING & VENDOR DIRECTORY",
-                            color = Color.White.copy(alpha = 0.8f),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.2.sp
-                        )
-                    }
-                }
-            }
+            InventoryScreenHeader(
+                title = "Price List",
+                subtitle = "MASTER PRICING & VENDOR DIRECTORY",
+                onBack = onBack,
+            )
 
             // ── Filters ───────────────────────────────────────────────────────────
             LazyRow(
@@ -274,26 +233,7 @@ fun PriceListScreen(
         }
 
         // ── FAB ──────────────────────────────────────────────────────────────
-        FloatingActionButton(
-            onClick = { onAdd() },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(24.dp)
-                .padding(bottom = 16.dp),
-            containerColor = AppTheme.Brand,
-            contentColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
-            elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(Icons.Default.Add, null)
-                Text("Add Item", fontWeight = FontWeight.Bold)
-            }
-        }
+        PremiumGradientFab(onClick = { onAdd() })
     }
 }
 
