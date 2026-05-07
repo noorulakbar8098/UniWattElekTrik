@@ -17,3 +17,7 @@ captures
 !*.xcworkspace/contents.xcworkspacedata
 **/xcshareddata/WorkspaceSettings.xcsettings
 node_modules/
+# Firebase / Google Cloud service-account private keys (NEVER COMMIT)
+**/*-firebase-adminsdk-*.json
+**/serviceAccountKey*.json
+scripts/uniwattelectric-firebase-adminsdk-fbsvc-1c7d8831b6.json
