@@ -1,5 +1,9 @@
 package com.example.uniwattelektrik.di
 
+import com.example.uniwattelektrik.core.notification.AdminNotificationsCoordinator
+import com.example.uniwattelektrik.core.notification.LocalNotifier
+import com.example.uniwattelektrik.core.notification.UserNotificationsCoordinator
+import com.example.uniwattelektrik.core.performance.PerformanceMonitor
 import com.example.uniwattelektrik.feature.auth.data.remote.AdminDirectory
 import com.example.uniwattelektrik.feature.auth.data.remote.AdminDirectoryFactory
 import com.example.uniwattelektrik.feature.auth.data.remote.EmailAuthClient
@@ -38,6 +42,18 @@ object AppContainer {
     // --- Platform singletons ---
     private val sessionStorage by lazy { SessionStorage() }
     val linkLauncher: LinkLauncher by lazy { LinkLauncher() }
+
+    /** App-wide performance monitor (Firebase Perf on Android, log-only on iOS). */
+    val performanceMonitor: PerformanceMonitor by lazy { PerformanceMonitor() }
+
+    // --- In-app notifications (free path: Firestore listeners + local push) ---
+    val localNotifier: LocalNotifier by lazy { LocalNotifier() }
+    val adminNotificationsCoordinator: AdminNotificationsCoordinator by lazy {
+        AdminNotificationsCoordinator(workforceDirectory, localNotifier)
+    }
+    val userNotificationsCoordinator: UserNotificationsCoordinator by lazy {
+        UserNotificationsCoordinator(workforceDirectory, localNotifier)
+    }
 
     // --- Data layer ---
     // Auto-detects Firebase: real client when google-services.json is present,

@@ -59,7 +59,7 @@ fun BoxScope.PremiumGradientFab(
             .size(64.dp)
             .shadow(20.dp, CircleShape, spotColor = AppTheme.Brand.copy(alpha = 0.6f))
             .clip(CircleShape)
-            .background(Brush.linearGradient(listOf(AppTheme.Brand, AppTheme.Brand600)))
+            .background(Brush.linearGradient(listOf(AppTheme.Brand, AppTheme.Brand700)))
             .border(3.dp, Color.White, CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,

@@ -15,6 +15,7 @@ rules_version = '2';
 //   /spare_items/{itemId}             ← spares      { adminId, ... }
 //   /departments/{deptId}             ← departments { adminId, name, ... }
 //   /equipment/{equipmentId}          ← equipment   { adminId, departmentId, ... }
+//   /leave_requests/{leaveId}         ← leave requests { adminId, userId, status, ... }
 //   /employee_map/{userId}            ← auth lookup { adminId, mustChangePassword }
 //   /admin_ids/{code}                 ← admin code lookup
 service cloud.firestore {
@@ -126,6 +127,18 @@ service cloud.firestore {
       allow create:         if ownsIncoming();
       allow read, update,
             delete, list:   if ownsExisting();
+    }
+
+    // ── Leave requests ────────────────────────────────────────────────────
+    // Employee can create & read their own requests (userId field).
+    // Admin can read, update (approve/reject), and delete within their tenant.
+    match /leave_requests/{leaveId} {
+      allow create:         if ownsIncoming()
+                              || (isAuthed() && request.resource.data.userId == request.auth.uid);
+      allow read, list:     if ownsExisting()
+                              || (isAuthed() && resource.data.userId == request.auth.uid);
+      allow update:         if ownsExisting();
+      allow delete:         if ownsExisting();
     }
 
     // ── Departments / Equipment ────────────────────────────────────────────

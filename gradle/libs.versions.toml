@@ -13,6 +13,9 @@ composeMultiplatform = "1.10.3"
 firebaseAuth = "23.1.0"
 firebaseFirestore = "25.1.1"
 firebaseStorage = "21.0.1"
+firebaseMessaging = "24.1.0"
+firebasePerf = "21.0.4"
+firebasePerfPlugin = "1.4.2"
 gitliveFirebase = "2.1.0"
 coil = "3.0.4"
 googleServices = "4.4.2"
@@ -50,6 +53,8 @@ osmdroid-android = { module = "org.osmdroid:osmdroid-android", version.ref = "os
 firebase-auth = { module = "com.google.firebase:firebase-auth-ktx", version.ref = "firebaseAuth" }
 firebase-firestore = { module = "com.google.firebase:firebase-firestore-ktx", version.ref = "firebaseFirestore" }
 firebase-storage = { module = "com.google.firebase:firebase-storage-ktx", version.ref = "firebaseStorage" }
+firebase-messaging = { module = "com.google.firebase:firebase-messaging-ktx", version.ref = "firebaseMessaging" }
+firebase-perf = { module = "com.google.firebase:firebase-perf", version.ref = "firebasePerf" }
 gitlive-firebase-auth = { module = "dev.gitlive:firebase-auth", version.ref = "gitliveFirebase" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
@@ -61,3 +66,4 @@ composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "composeMul
 composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 googleServices = { id = "com.google.gms.google-services", version.ref = "googleServices" }
+firebasePerf = { id = "com.google.firebase.firebase-perf", version.ref = "firebasePerfPlugin" }

@@ -1,9 +1,13 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import com.example.uniwattelektrik.core.components.DottedClickable
 import com.example.uniwattelektrik.core.components.DottedField
 import com.example.uniwattelektrik.core.components.DottedReadOnly
 import com.example.uniwattelektrik.core.components.FieldLabel
+import com.example.uniwattelektrik.core.theme.AppTheme
+import com.example.uniwattelektrik.core.theme.AppShapes
 import com.example.uniwattelektrik.core.theme.appScreenBackground
 
 import androidx.compose.foundation.background
@@ -65,6 +69,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import com.example.uniwattelektrik.core.components.AppPullToRefresh
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -123,28 +128,37 @@ import com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeRecord
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
 import kotlinx.coroutines.delay
 import kotlinx.datetime.toLocalDateTime
-
-/* ── Local design tokens (per pixel-perfect spec) ─────────────────────── */
-private val GradStart    = Color(0xFF3B82F6)
-private val GradMid      = Color(0xFF1D4ED8)
-private val GradEnd      = Color(0xFF0F172A)
-private val ScreenBg     = Color(0xFFF5F7FB)
-private val CardBg       = Color(0xFFFFFFFF)
-private val InkPrimary   = Color(0xFF0F172A)
-private val InkSecondary = Color(0xFF64748B)
-private val InkMuted     = Color(0xFF94A3B8)
-private val Highlight    = Color(0xFF2979FF)
-private val Success      = Color(0xFF22C55E)
-private val SuccessBg    = Color(0xFFE6F9F0)
-private val OffDuty      = Color(0xFF64748B)
-private val OffDutyBg    = Color(0xFFEEF2F7)
-private val Leave        = Color(0xFF8B5CF6)
-private val LeaveBg      = Color(0xFFF3ECFF)
-private val Danger       = Color(0xFFEF4444)
-private val ChipBg       = Color(0xFFEFF3F8)
-private val ShadowSoft   = Color(0x14172C50)
+// ─── Design tokens — backed by enterprise system ────────────────────────────
+private val ScreenBg     = AppTheme.Bg
+private val CardBg       = AppTheme.Surface
+private val InkPrimary   = AppTheme.Ink900
+private val InkSecondary = AppTheme.Ink500
+private val InkMuted     = AppTheme.Ink300
+private val Brand        = AppTheme.Brand
+private val BrandDeep    = AppTheme.Brand700
+private val Brand50      = AppTheme.Brand50
+private val Success      = AppTheme.Success
+private val SuccessBg    = AppTheme.SuccessBg
+private val Warning      = AppTheme.Warning
+private val WarningBg    = AppTheme.WarningBg
+private val Danger       = AppTheme.Danger
+private val DangerBg     = AppTheme.DangerBg
+private val DividerSoft  = AppTheme.Ink100
+private val ShadowSoft   = AppTheme.ShadowMd
+private val GradStart    = AppTheme.Brand
+private val GradEnd      = AppTheme.Navy
 private val WhiteAlpha20 = Color(0x33FFFFFF)
 private val WhiteAlpha70 = Color(0xB3FFFFFF)
+private val Leave        = AppTheme.Violet
+private val LeaveBg      = AppTheme.PriorityUrgentBg
+private val OffDuty      = AppTheme.StatusLeave
+private val OffDutyBg    = AppTheme.StatusLeaveBg
+private val ChipBg       = AppTheme.SurfaceMuted
+// Previously missing — now resolved via design system
+private val Highlight    = AppTheme.Brand
+
+
+/* ── Local design tokens (per pixel-perfect spec) ─────────────────────── */
 
 /* ── Filter category mapping (role text → bucket) ─────────────────────── */
 private enum class RoleCategory(val label: String) {
@@ -170,6 +184,7 @@ fun AdminEmployeesScreen(
     onShowAddChange: (show: Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    TrackScreenPerformance("AdminEmployeesScreen")
     val employees by workforceVm.employees.collectAsStateWithLifecycle()
     val loading   by workforceVm.loading.collectAsStateWithLifecycle()
     val error     by workforceVm.error.collectAsStateWithLifecycle()
@@ -254,10 +269,12 @@ fun AdminEmployeesScreen(
             )
 
             // ── Scrollable list content ─────────────────────────────────
+            AppPullToRefresh(
+                onRefresh = { workforceVm.refresh() },
+                modifier  = Modifier.weight(1f),
+            ) {
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .weight(1f),
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 120.dp), // clear of FAB + nav
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
@@ -296,7 +313,8 @@ fun AdminEmployeesScreen(
                     }
                 }
             }
-        }
+            } // AppPullToRefresh
+        }     // Column
 
         // ── Floating action button (sits above the bottom nav, matches Task list FAB) ────
         Box(
@@ -516,7 +534,7 @@ private val avatarPalette = listOf(
     listOf(Color(0xFFFFB28A), Color(0xFFEC8552)),
     listOf(Color(0xFFA5C8FF), Color(0xFF1E73E8)),
     listOf(Color(0xFFB5F0C0), Color(0xFF10B981)),
-    listOf(Color(0xFFD8B5FF), Color(0xFF8B5CF6)),
+    listOf(Color(0xFFBFD7FF), Color(0xFF1A6BF5)),
     listOf(Color(0xFFFFC8E0), Color(0xFFEF4444)),
     listOf(Color(0xFFFFD6A5), Color(0xFFF59E0B)),
 )
@@ -674,7 +692,7 @@ private fun EmployeeCard(e: EmployeeRecord, onClick: () -> Unit) {
                         )
                         Text(
                             text     = e.department,
-                            color    = Color(0xFF7C3AED),
+                            color    = Color(0xFF1A6BF5),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Medium,
                             maxLines = 1,
@@ -808,7 +826,7 @@ private fun InfoBlock(emoji: String, title: String, body: String) {
                 .background(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            Color(0xFF7C3AED).copy(alpha = 0.1f),
+                            Color(0xFF1A6BF5).copy(alpha = 0.1f),
                             Color.Transparent
                         )
                     )
@@ -1318,7 +1336,7 @@ private fun AddEmployeeSheet(
                             emoji = "🌙",
                             label = "SHIFT 2",
                             sub = "13:00 – 23:00",
-                            tint = Color(0xFF7C3AED),
+                            tint = Color(0xFF1A6BF5),
                             bg = Color(0xFFF3EAFE),
                             selected = shift == "Shift2",
                             onClick = { shift = "Shift2" },

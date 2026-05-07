@@ -97,6 +97,39 @@ class AuthRepositoryImpl(
             is Resource.Success -> {
                 val data = result.data
                 AppLog.i("AuthRepo", "  ↳ FirebaseAuth OK uid=${data.uid} email=${data.email}")
+
+                // ── Role-guard for sign-in ────────────────────────────────────
+                // We always probe the admin directory so that:
+                //   • An admin who tries the *user* login is rejected.
+                //   • An employee who tries the *admin* login is rejected.
+                // Sign-up bypasses this — that flow always provisions an admin.
+                val existingAdminId: String? = if (!isSignUp) {
+                    runCatching { adminDirectory.lookupAdminIdByUid(data.uid) }
+                        .onFailure { AppLog.w("AuthRepo", "  ↳ admin lookup failed", it) }
+                        .getOrNull()
+                } else null
+
+                if (!isSignUp) {
+                    if (asAdmin && existingAdminId == null) {
+                        AppLog.w("AuthRepo", "  ↳ REJECT: non-admin tried admin login uid=${data.uid}")
+                        return Resource.failure(
+                            com.example.uniwattelektrik.core.AppError.Unknown(
+                                "This is an employee account. Please use the Employee login.",
+                            ),
+                        )
+                    }
+                    if (!asAdmin && existingAdminId != null) {
+                        AppLog.w("AuthRepo", "  ↳ REJECT: admin tried user login uid=${data.uid}")
+                        return Resource.failure(
+                            com.example.uniwattelektrik.core.AppError.Unknown(
+                                "This is an admin account. Please use the Admin login.",
+                            ),
+                        )
+                    }
+                }
+
+                // Persist the verified token only after the role guard passes,
+                // so a rejected attempt leaves no stale credentials behind.
                 sessionStorage.saveToken(data.idToken)
                 AppLog.d("AuthRepo", "  ↳ token saved (len=${data.idToken.length})")
 
@@ -119,30 +152,7 @@ class AuthRepositoryImpl(
                         }
                         newId
                     }
-                    asAdmin -> {
-                        AppLog.d("AuthRepo", "  ↳ admin sign-in: looking up admins/${data.uid}")
-                        val existing = runCatching {
-                            adminDirectory.lookupAdminIdByUid(data.uid)
-                        }.onFailure {
-                            AppLog.w("AuthRepo", "  ↳ lookup failed", it)
-                        }.getOrNull()
-                        existing?.also { AppLog.i("AuthRepo", "  ↳ existing adminId=$it") }
-                            ?: run {
-                                val newId = "ADM-${data.uid.take(4).uppercase()}"
-                                AppLog.w("AuthRepo", "  ↳ admin doc missing — self-healing register adminId=$newId")
-                                runCatching {
-                                    adminDirectory.register(
-                                        uid = data.uid,
-                                        adminId = newId,
-                                        email = data.email,
-                                        fullName = fullName,
-                                    )
-                                }.onFailure {
-                                    AppLog.e("AuthRepo", "  ↳ self-heal register FAILED", it)
-                                }
-                                newId
-                            }
-                    }
+                    asAdmin -> existingAdminId  // already validated non-null above
                     else -> null  // employee sign-in — adminId stays null; parentAdminId is resolved below
                 }
 

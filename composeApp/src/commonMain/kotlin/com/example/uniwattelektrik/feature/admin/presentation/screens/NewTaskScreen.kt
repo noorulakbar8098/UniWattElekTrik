@@ -1,6 +1,10 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import com.example.uniwattelektrik.core.theme.appScreenBackground
+import com.example.uniwattelektrik.core.theme.AppShapes
+import com.example.uniwattelektrik.core.theme.AppTheme
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -94,29 +98,31 @@ import com.example.uniwattelektrik.platform.nowEpochMillis
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+// ─── Design tokens — backed by enterprise system ────────────────────────────
+private val ScreenBg     = AppTheme.Bg
+private val CardBg       = AppTheme.Surface
+private val InkPrimary   = AppTheme.Ink900
+private val InkSecondary = AppTheme.Ink500
+private val InkMuted     = AppTheme.Ink300
+private val Brand        = AppTheme.Brand
+private val BrandDeep    = AppTheme.Brand700
+private val Brand50      = AppTheme.Brand50
+private val Success      = AppTheme.Success
+private val SuccessBg    = AppTheme.SuccessBg
+private val Warning      = AppTheme.Warning
+private val WarningBg    = AppTheme.WarningBg
+private val Danger       = AppTheme.Danger
+private val DangerBg     = AppTheme.DangerBg
+private val DividerSoft  = AppTheme.Ink100
+private val ShadowSoft   = AppTheme.ShadowMd
+private val InputBg      = AppTheme.SurfaceMuted
+private val DotBorder    = AppTheme.Ink300
+private val Divider      = AppTheme.Ink100
+private val Purple       = AppTheme.Violet
+private val PurpleBg     = AppTheme.PriorityUrgentBg
+
 
 /* ── Local design tokens ─────────────────────────────────────────────── */
-private val ScreenBg     = Color(0xFFF4F7FB)
-private val CardBg       = Color(0xFFFFFFFF)
-private val InputBg      = Color(0xFFFAFBFD)
-private val InkPrimary   = Color(0xFF1A2B49)
-private val InkSecondary = Color(0xFF6B7A99)
-private val InkMuted     = Color(0xFF94A3B8)
-private val Brand        = Color(0xFF3B82F6)
-private val BrandDeep    = Color(0xFF1D4ED8)
-private val BrandDark    = Color(0xFF0F172A)
-private val Brand50      = Color(0xFFE6F0FE)
-private val Success      = Color(0xFF22C55E)
-private val SuccessBg    = Color(0xFFDCFCE7)
-private val Warning      = Color(0xFFF59E0B)
-private val WarningBg    = Color(0xFFFEF3C7)
-private val Danger       = Color(0xFFEF4444)
-private val DangerBg     = Color(0xFFFEE2E2)
-private val Purple       = Color(0xFF8B5CF6)
-private val PurpleBg     = Color(0xFFEDE9FE)
-private val ShadowSoft   = Color(0x14172C50)
-private val DotBorder    = Color(0xFFCBD5E1)
-private val Divider      = Color(0xFFE2E8F0)
 
 /**
  * Advanced multi-section task creation form (8 collapsible sections).
@@ -148,6 +154,7 @@ fun NewTaskScreen(
      */
     editTaskId: String? = null,
 ) {
+    TrackScreenPerformance("NewTaskScreen")
     val employees by workforceVm.employees.collectAsStateWithLifecycle()
     val departments by inventoryVm.departments.collectAsStateWithLifecycle()
     val equipmentAll by inventoryVm.equipment.collectAsStateWithLifecycle()
@@ -214,7 +221,7 @@ fun NewTaskScreen(
 
     /* ── Section 5: Priority ──────────────────────────────────────── */
     var priority by remember { mutableStateOf("Medium") }
-    var risk     by remember { mutableStateOf("Low") }
+    var risk     by remember { mutableStateOf("Success") }
 
     /* ── Service details (Department + Equipment) ─────────────────── */
     var selectedDeptId   by remember { mutableStateOf<String?>(null) }
@@ -270,8 +277,8 @@ fun NewTaskScreen(
         title       = src.title
         description = src.description
         priority    = when (src.priority.lowercase()) {
-            "low"  -> "Low"
-            "high" -> "High"
+            "low"  -> "Success"
+            "high" -> "Danger"
             else   -> "Medium"
         }
         location    = src.address.ifBlank { src.location }
@@ -581,19 +588,19 @@ fun NewTaskScreen(
                 ) {
                     FieldLabel("Priority", required = true)
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        PriorityCard("LOW",  "Low priority", Success, SuccessBg, "🟢",
-                            priority == "Low",    { priority = "Low"    }, Modifier.weight(1f))
+                        PriorityCard("LOW",  "Success priority", Success, SuccessBg, "🟢",
+                            priority == "Success",    { priority = "Success"    }, Modifier.weight(1f))
                         PriorityCard("MED",  "Medium",       Warning, WarningBg, "🟠",
                             priority == "Medium", { priority = "Medium" }, Modifier.weight(1f))
                         PriorityCard("HIGH", "Critical",     Danger,  DangerBg,  "🔴",
-                            priority == "High",   { priority = "High"   }, Modifier.weight(1f))
+                            priority == "Danger",   { priority = "Danger"   }, Modifier.weight(1f))
                     }
 
                     Spacer(Modifier.height(14.dp))
                     FieldLabel("Risk level")
                     DottedSelect(
                         value = risk, onChange = { risk = it },
-                        options = listOf("Low", "Medium", "High"),
+                        options = listOf("Success", "Medium", "Danger"),
                         leadingIcon = Icons.Filled.Flag,
                     )
                 }

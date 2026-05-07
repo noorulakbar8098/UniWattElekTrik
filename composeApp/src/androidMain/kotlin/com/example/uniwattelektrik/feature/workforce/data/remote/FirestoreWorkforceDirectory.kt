@@ -30,6 +30,22 @@ private suspend fun <T> com.google.android.gms.tasks.Task<T>.awaitBounded(): T =
     bounded { this.await() }
 
 /**
+ * Safely reads a field that may be stored as a Firestore [Timestamp] (written
+ * by the app via FieldValue.serverTimestamp) OR as a plain [Long] epoch-millis
+ * (written by the seed script / external tools). Returns null when absent.
+ */
+private fun com.google.firebase.firestore.DocumentSnapshot.getMillis(field: String): Long? {
+    val raw = get(field) ?: return null
+    return when (raw) {
+        is com.google.firebase.Timestamp -> raw.toDate().time
+        is Long                          -> raw
+        is Double                        -> raw.toLong()   // Firestore may deserialise integers as Double
+        is Number                        -> raw.toLong()
+        else                             -> null
+    }
+}
+
+/**
  * Firestore-backed workforce directory using **flat top-level collections**.
  *
  * Collection layout:
@@ -78,7 +94,7 @@ class FirestoreWorkforceDirectory(
                     close(err); return@addSnapshotListener
                 }
                 val list = snap?.documents.orEmpty().map { d ->
-                    val createdAt = d.getTimestamp("createdAt")?.toDate()?.time ?: 0L
+                    val createdAt = d.getMillis("createdAt") ?: 0L
                     createdAt to EmployeeRecord(
                         id                = d.id,
                         name              = d.getString("name") ?: "—",
@@ -90,10 +106,10 @@ class FirestoreWorkforceDirectory(
                         email             = d.getString("email") ?: "",
                         gender            = d.getString("gender") ?: "",
                         employmentType    = d.getString("employmentType") ?: "",
-                        joiningDateMs     = d.getTimestamp("joiningDate")?.toDate()?.time,
+                        joiningDateMs     = d.getMillis("joiningDate"),
                         salary            = d.getDouble("salary") ?: 0.0,
                         photoUrl          = d.getString("photoUrl") ?: "",
-                        dateOfBirthMs     = d.getTimestamp("dateOfBirth")?.toDate()?.time,
+                        dateOfBirthMs     = d.getMillis("dateOfBirth"),
                         address           = d.getString("address") ?: "",
                         department        = d.getString("department") ?: "",
                         reportingTo       = d.getString("reportingTo") ?: "",
@@ -102,8 +118,8 @@ class FirestoreWorkforceDirectory(
                         emergencyRelation = d.getString("emergencyRelation") ?: "",
                         emergencyPhone    = d.getString("emergencyPhone") ?: "",
                         shift             = d.getString("shift") ?: "Shift1",
-                        updatedAt         = d.getTimestamp("updatedAt")?.toDate()?.time,
-                        deletedAt         = d.getTimestamp("deletedAt")?.toDate()?.time,
+                        updatedAt         = d.getMillis("updatedAt"),
+                        deletedAt         = d.getMillis("deletedAt"),
                         fcmToken          = d.getString("fcmToken") ?: "",
                     )
                 }.sortedByDescending { it.first }.map { it.second }
@@ -212,6 +228,18 @@ class FirestoreWorkforceDirectory(
         }
     }
 
+    override suspend fun updateEmployeeStatus(adminId: String, employeeId: String, status: String) {
+        AppLog.i("PATH", "update $COL_USERS/$employeeId status=$status")
+        bounded {
+            firestore.collection(COL_USERS).document(employeeId)
+                .update(mapOf(
+                    "status"    to status.lowercase(),
+                    "updatedAt" to FieldValue.serverTimestamp(),
+                ))
+                .await()
+        }
+    }
+
     override suspend fun saveFcmToken(adminId: String, uid: String, token: String) {
         AppLog.i("PATH", "update $COL_USERS/$uid fcmToken")
         firestore.collection(COL_USERS).document(uid)
@@ -247,7 +275,7 @@ class FirestoreWorkforceDirectory(
                     close(err); return@addSnapshotListener
                 }
                 val list = snap?.documents.orEmpty()
-                    .map { d -> (d.getTimestamp("createdAt")?.toDate()?.time ?: 0L) to toTask(d) }
+                    .map { d -> (d.getMillis("createdAt") ?: 0L) to toTask(d) }
                     .sortedByDescending { it.first }
                     .map { it.second }
                 trySend(list)
@@ -267,7 +295,7 @@ class FirestoreWorkforceDirectory(
                     close(err); return@addSnapshotListener
                 }
                 val list = snap?.documents.orEmpty()
-                    .map { d -> (d.getTimestamp("createdAt")?.toDate()?.time ?: 0L) to toTask(d) }
+                    .map { d -> (d.getMillis("createdAt") ?: 0L) to toTask(d) }
                     .sortedByDescending { it.first }
                     .map { it.second }
                 trySend(list)
@@ -466,7 +494,7 @@ class FirestoreWorkforceDirectory(
                     close(err); return@addSnapshotListener
                 }
                 val list = snap?.documents.orEmpty().map { d ->
-                    val ts = d.getTimestamp("createdAt")?.toDate()?.time ?: 0L
+                    val ts = d.getMillis("createdAt") ?: 0L
                     ts to TaskNote(
                         id          = d.id,
                         taskId      = taskId,
@@ -680,14 +708,14 @@ class FirestoreWorkforceDirectory(
             assigneeName     = d.getString("assigneeName") ?: "",
             ownerAdminId     = d.getString("ownerAdminId") ?: (d.getString("adminId") ?: ""),
             ownerAdminName   = d.getString("ownerAdminName") ?: "",
-            scheduledDateMs  = d.getTimestamp("scheduledDate")?.toDate()?.time,
-            dueDate          = d.getTimestamp("dueDate")?.toDate()?.time,
-            createdAtMs      = d.getTimestamp("createdAt")?.toDate()?.time,
-            acceptedAt       = d.getTimestamp("acceptedAt")?.toDate()?.time,
+            scheduledDateMs  = d.getMillis("scheduledDate"),
+            dueDate          = d.getMillis("dueDate"),
+            createdAtMs      = d.getMillis("createdAt"),
+            acceptedAt       = d.getMillis("acceptedAt"),
             acceptedLat      = d.getDouble("acceptedLat"),
             acceptedLon      = d.getDouble("acceptedLon"),
-            completedAt      = d.getTimestamp("completedAt")?.toDate()?.time,
-            updatedAt        = d.getTimestamp("updatedAt")?.toDate()?.time,
+            completedAt      = d.getMillis("completedAt"),
+            updatedAt        = d.getMillis("updatedAt"),
             departmentId     = d.getString("departmentId") ?: "",
             departmentName   = d.getString("departmentName") ?: "",
             equipmentId      = d.getString("equipmentId") ?: "",
@@ -778,7 +806,7 @@ class FirestoreWorkforceDirectory(
                         itemName  = d.getString("itemName") ?: "",
                         type      = d.getString("type") ?: "",
                         quantity  = (d.getLong("quantity") ?: 0L).toInt(),
-                        createdAt = d.getTimestamp("createdAt")?.toDate()?.time,
+                        createdAt = d.getMillis("createdAt"),
                     )
                 }
                 trySend(list)
@@ -822,16 +850,16 @@ class FirestoreWorkforceDirectory(
                     AttendanceRecord(
                         id            = d.id,
                         userId        = d.getString("userId") ?: "",
-                        dateMs        = d.getTimestamp("date")?.toDate()?.time ?: 0L,
-                        checkInMs     = d.getTimestamp("checkIn")?.toDate()?.time ?: 0L,
+                        dateMs        = d.getMillis("date") ?: 0L,
+                        checkInMs     = d.getMillis("checkIn") ?: 0L,
                         checkInLat    = d.getDouble("checkInLat"),
                         checkInLng    = d.getDouble("checkInLng"),
                         checkInStatus = d.getString("checkInStatus") ?: "ON_TIME",
-                        checkOutMs    = d.getTimestamp("checkOut")?.toDate()?.time,
+                        checkOutMs    = d.getMillis("checkOut"),
                         checkOutLat   = d.getDouble("checkOutLat"),
                         checkOutLng   = d.getDouble("checkOutLng"),
                         status        = d.getString("attendanceStatus")
-                            ?: if (d.getTimestamp("checkOut") != null) "COMPLETED" else "CHECKED_IN",
+                            ?: if (d.getMillis("checkOut") != null) "COMPLETED" else "CHECKED_IN",
                     )
                 }
                 trySend(list)
@@ -910,7 +938,7 @@ class FirestoreWorkforceDirectory(
                         userId      = d.getString("userId") ?: "",
                         latitude    = lat,
                         longitude   = lng,
-                        timestampMs = d.getTimestamp("timestamp")?.toDate()?.time ?: 0L,
+                        timestampMs = d.getMillis("timestamp") ?: 0L,
                     )
                 }
                 trySend(list)
@@ -960,7 +988,7 @@ class FirestoreWorkforceDirectory(
                         type      = d.getString("type") ?: "",
                         isRead    = d.getBoolean("isRead") ?: false,
                         relatedId = d.getString("relatedId"),
-                        createdAt = d.getTimestamp("createdAt")?.toDate()?.time,
+                        createdAt = d.getMillis("createdAt"),
                     )
                 }
                 trySend(list)
@@ -1064,8 +1092,8 @@ class FirestoreWorkforceDirectory(
                         vendorContact2 = d.getString("vendorContact2") ?: "",
                         vendorAddress2 = d.getString("vendorAddress2") ?: "",
                         vendorLocation = d.getString("vendorLocation") ?: "",
-                        createdAt      = d.getTimestamp("createdAt")?.toDate()?.time,
-                        updatedAt      = d.getTimestamp("updatedAt")?.toDate()?.time,
+                        createdAt      = d.getMillis("createdAt"),
+                        updatedAt      = d.getMillis("updatedAt"),
                     )
                 }
                 trySend(list)
@@ -1179,7 +1207,7 @@ class FirestoreWorkforceDirectory(
             vendorContact2 = doc.getString("vendorContact2") ?: "",
             vendorAddress2 = doc.getString("vendorAddress2") ?: "",
             vendorLocation = doc.getString("vendorLocation") ?: "",
-            updatedAt      = doc.getTimestamp("updatedAt")?.toDate()?.time,
+            updatedAt      = doc.getMillis("updatedAt"),
         )
     }
 
@@ -1216,8 +1244,8 @@ class FirestoreWorkforceDirectory(
                         id        = d.id,
                         adminId   = adminId,
                         name      = d.getString("name") ?: "—",
-                        createdAt = d.getTimestamp("createdAt")?.toDate()?.time,
-                        updatedAt = d.getTimestamp("updatedAt")?.toDate()?.time,
+                        createdAt = d.getMillis("createdAt"),
+                        updatedAt = d.getMillis("updatedAt"),
                     )
                 }.sortedBy { it.name.lowercase() }
                 trySend(list)
@@ -1267,8 +1295,8 @@ class FirestoreWorkforceDirectory(
                         adminId      = adminId,
                         name         = d.getString("name") ?: "—",
                         departmentId = d.getString("departmentId") ?: "",
-                        createdAt    = d.getTimestamp("createdAt")?.toDate()?.time,
-                        updatedAt    = d.getTimestamp("updatedAt")?.toDate()?.time,
+                        createdAt    = d.getMillis("createdAt"),
+                        updatedAt    = d.getMillis("updatedAt"),
                     )
                 }.sortedBy { it.name.lowercase() }
                 trySend(list)
@@ -1316,6 +1344,125 @@ class FirestoreWorkforceDirectory(
         firestore.collection(COL_EQUIPMENT).document(equipmentId).delete().awaitBounded()
     }
 
+    // ─── Leave requests ──────────────────────────────────────────────────────
+
+    override fun observeLeaveRequestsForAdmin(adminId: String): Flow<List<LeaveRecord>> =
+        callbackFlow {
+            val reg = firestore.collection(COL_LEAVE_REQUESTS)
+                .whereEqualTo("adminId", adminId)
+                .addSnapshotListener { snap, err ->
+                    if (err != null) { close(err); return@addSnapshotListener }
+                    trySend(snap?.documents.orEmpty().mapNotNull { d ->
+                        d.toLeaveRecord()
+                    }.sortedByDescending { it.createdAtMs ?: 0L })
+                }
+            awaitClose { reg.remove() }
+        }
+
+    override fun observeLeaveRequestsForUser(userId: String): Flow<List<LeaveRecord>> =
+        callbackFlow {
+            val reg = firestore.collection(COL_LEAVE_REQUESTS)
+                .whereEqualTo("userId", userId)
+                .addSnapshotListener { snap, err ->
+                    if (err != null) { close(err); return@addSnapshotListener }
+                    trySend(snap?.documents.orEmpty().mapNotNull { d ->
+                        d.toLeaveRecord()
+                    }.sortedByDescending { it.createdAtMs ?: 0L })
+                }
+            awaitClose { reg.remove() }
+        }
+
+    override suspend fun submitLeaveRequest(
+        adminId: String,
+        userId: String,
+        employeeName: String,
+        department: String,
+        leaveType: String,
+        fromDateMs: Long,
+        toDateMs: Long,
+        totalDays: Int,
+        reason: String,
+    ): LeaveRecord {
+        val ref = firestore.collection(COL_LEAVE_REQUESTS).document()
+        AppLog.i("PATH", "write $COL_LEAVE_REQUESTS/${ref.id}")
+        bounded {
+            ref.set(
+                mapOf(
+                    "adminId"       to adminId,
+                    "userId"        to userId,
+                    "employeeName"  to employeeName,
+                    "department"    to department,
+                    "leaveType"     to leaveType,
+                    "fromDateMs"    to fromDateMs,
+                    "toDateMs"      to toDateMs,
+                    "totalDays"     to totalDays,
+                    "reason"        to reason,
+                    "status"        to "pending",
+                    "rejectionReason" to "",
+                    "createdAt"     to FieldValue.serverTimestamp(),
+                    "updatedAt"     to FieldValue.serverTimestamp(),
+                )
+            ).await()
+        }
+        val nowMs = System.currentTimeMillis()
+        return LeaveRecord(
+            id = ref.id, userId = userId, adminId = adminId,
+            employeeName = employeeName, department = department,
+            leaveType = leaveType, fromDateMs = fromDateMs, toDateMs = toDateMs,
+            totalDays = totalDays, reason = reason, status = "pending",
+            createdAtMs = nowMs, updatedAtMs = nowMs,
+        )
+    }
+
+    override suspend fun updateLeaveStatus(
+        leaveId: String,
+        adminId: String,
+        userId: String,
+        newStatus: String,
+        rejectionReason: String,
+    ) {
+        AppLog.i("PATH", "updateLeaveStatus $COL_LEAVE_REQUESTS/$leaveId → $newStatus")
+        val leaveRef = firestore.collection(COL_LEAVE_REQUESTS).document(leaveId)
+        val userRef  = firestore.collection(COL_USERS).document(userId)
+        bounded {
+            firestore.runTransaction { tx ->
+                val updates = mutableMapOf<String, Any>(
+                    "status"    to newStatus,
+                    "updatedAt" to FieldValue.serverTimestamp(),
+                )
+                if (rejectionReason.isNotBlank()) updates["rejectionReason"] = rejectionReason
+                tx.update(leaveRef, updates)
+                if (newStatus == "approved") {
+                    tx.update(userRef, mapOf("status" to "OnLeave"))
+                }
+            }.await()
+        }
+    }
+
+    private fun com.google.firebase.firestore.DocumentSnapshot.toLeaveRecord(): LeaveRecord? {
+        return try {
+            LeaveRecord(
+                id               = id,
+                userId           = getString("userId") ?: return null,
+                adminId          = getString("adminId") ?: return null,
+                employeeName     = getString("employeeName") ?: "—",
+                department       = getString("department") ?: "",
+                leaveType        = getString("leaveType") ?: "Casual",
+                fromDateMs       = getLong("fromDateMs") ?: 0L,
+                toDateMs         = getLong("toDateMs") ?: 0L,
+                totalDays        = (getLong("totalDays") ?: 1L).toInt(),
+                reason           = getString("reason") ?: "",
+                status           = getString("status") ?: "pending",
+                rejectionReason  = getString("rejectionReason") ?: "",
+                createdAtMs      = getMillis("createdAt"),
+                updatedAtMs      = getMillis("updatedAt"),
+            )
+        } catch (e: Exception) {
+            AppLog.w("PATH", "toLeaveRecord failed for $id: ${e.message}")
+            null
+        }
+    }
+
     // ─── Danger zone ─────────────────────────────────────────────────────────
 
     override suspend fun deleteAllData(adminId: String) {
@@ -1330,6 +1477,7 @@ class FirestoreWorkforceDirectory(
             COL_SPARE_ITEMS,
             COL_DEPARTMENTS,
             COL_EQUIPMENT,
+            COL_LEAVE_REQUESTS,
         )
         for (col in tenantCollections) {
             deleteTenantCollection(col, adminId)
@@ -1367,5 +1515,6 @@ class FirestoreWorkforceDirectory(
         const val COL_SPARE_ITEMS            = "spare_items"
         const val COL_DEPARTMENTS            = "departments"
         const val COL_EQUIPMENT              = "equipment"
+        const val COL_LEAVE_REQUESTS         = "leave_requests"
     }
 }

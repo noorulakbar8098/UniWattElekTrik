@@ -1,5 +1,7 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens.inventory
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -71,9 +73,10 @@ fun ImportSpareItemsPreviewScreen(
     onBack: () -> Unit,
     onSuccess: (Int) -> Unit,
 ) {
-    val sheet = inventoryVm.stagedSheet
+    TrackScreenPerformance("ImportSpareItemsPreviewScreen")
+    val sheets     = inventoryVm.stagedSheets
     val inProgress by inventoryVm.importInProgress.collectAsStateWithLifecycle()
-    val result by inventoryVm.importResult.collectAsStateWithLifecycle()
+    val result     by inventoryVm.importResult.collectAsStateWithLifecycle()
 
     LaunchedEffect(result) {
         result?.let { n ->
@@ -82,7 +85,7 @@ fun ImportSpareItemsPreviewScreen(
         }
     }
 
-    if (sheet == null) {
+    if (sheets.isNullOrEmpty()) {
         LaunchedEffect(Unit) { onBack() }
         return
     }
@@ -91,14 +94,22 @@ fun ImportSpareItemsPreviewScreen(
         color = AppTheme.Bg, darkIcons = true,
     )
 
-    val mapping = remember(sheet.headers, sheet.rows) {
-        buildHeaderMapping(sheet.headers, sheet.rows.firstOrNull())
+    // Parse every sheet independently (each may have a different column layout)
+    // then merge into a single flat draft list.
+    val drafts = remember(sheets) {
+        sheets.flatMap { sheet ->
+            val mapping = buildHeaderMapping(
+                headers      = sheet.headers,
+                firstDataRow = sheet.rows.firstOrNull(),
+                sheetName    = sheet.sheetName,
+            )
+            parseRows(sheet.rows, mapping)
+        }
     }
-    val drafts = remember(sheet, mapping) {
-        parseRows(sheet.rows, mapping)
-    }
-    val groups = remember(drafts) { groupForDisplay(drafts) }
-    val skipped = sheet.rows.size - drafts.size - countCategoryRows(sheet.rows)
+    val groups  = remember(drafts) { groupForDisplay(drafts) }
+    val skipped = sheets.sumOf { it.rows.size } -
+                  drafts.size -
+                  sheets.sumOf { countCategoryRows(it.rows) }
 
     // Category & item expansion state, default-expanded.
     val expandedCats = remember(groups) {
@@ -130,7 +141,8 @@ fun ImportSpareItemsPreviewScreen(
                      fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 val totalItems = groups.sumOf { it.items.size }
                 Text(
-                    "${drafts.size} variants · $totalItems items · ${groups.size} categories" +
+                    "${sheets.size} sheets · ${drafts.size} variants · " +
+                        "$totalItems items · ${groups.size} categories" +
                         if (skipped > 0) " · $skipped skipped" else "",
                     color = AppTheme.Ink500, fontSize = 12.sp,
                 )
@@ -143,16 +155,19 @@ fun ImportSpareItemsPreviewScreen(
                 modifier = Modifier.fillMaxWidth()
                     .padding(horizontal = 12.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(AppTheme.HighBg)
+                    .background(AppTheme.DangerBg)
                     .padding(12.dp),
             ) {
                 Column {
-                    Text("No rows could be imported", color = AppTheme.High,
+                    Text("No rows could be imported", color = AppTheme.Danger,
                          fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(4.dp))
                     Text(
                         "Expecting column 0 = serial number ('2', '2.1', …) and column 1 = name. " +
-                            "Headers found: ${sheet.headers.joinToString(", ") { it.ifBlank { "—" } }}",
+                            "Headers found: ${
+                                sheets.firstOrNull()?.headers
+                                    ?.joinToString(", ") { it.ifBlank { "—" } } ?: "none"
+                            }",
                         color = AppTheme.Ink700, fontSize = 12.sp,
                     )
                 }
@@ -211,7 +226,7 @@ fun ImportSpareItemsPreviewScreen(
                     .clip(RoundedCornerShape(12.dp))
                     .background(AppTheme.Ink100)
                     .clickable(enabled = !inProgress) {
-                        inventoryVm.stagedSheet = null
+                        inventoryVm.stagedSheets = null
                         onBack()
                     },
                 contentAlignment = Alignment.Center,
@@ -466,43 +481,31 @@ private fun resolveCategoryLabel(
         if (inline.isNotBlank() && !inline.matches(SERIAL_LIKE_RX)) return inline
     }
 
-    // Indices we should NEVER pick up as a category — they are field columns
-    // (vendor / size / price / hsn / …) detected during header mapping.
-    val fieldIndices = setOfNotNull(
-        mapping.size.takeIf { it >= 0 },
-        mapping.core.takeIf { it >= 0 },
-        mapping.currentRating.takeIf { it >= 0 },
-        mapping.noOfPoles.takeIf { it >= 0 },
-        mapping.unit.takeIf { it >= 0 },
-        mapping.price.takeIf { it >= 0 },
-        mapping.stockQty.takeIf { it >= 0 },
-        mapping.hsn.takeIf { it >= 0 },
-        mapping.make.takeIf { it >= 0 },
-        mapping.vendorName1.takeIf { it >= 0 },
-        mapping.vendorGst1.takeIf { it >= 0 },
-        mapping.vendorContact1.takeIf { it >= 0 },
-        mapping.vendorAddress1.takeIf { it >= 0 },
-        mapping.vendorName2.takeIf { it >= 0 },
-        mapping.vendorGst2.takeIf { it >= 0 },
-        mapping.vendorContact2.takeIf { it >= 0 },
-        mapping.vendorAddress2.takeIf { it >= 0 },
-        mapping.vendorLocation.takeIf { it >= 0 },
-    )
-
-    // 2. col 1 (the canonical place — most common case).
+    // 2. Col 1 is the ONLY other reliable source for a category label.
+    //    We intentionally do NOT scan the rest of the row — that broad scan
+    //    was the root cause of vendor names (e.g. "Pigeon") leaking in as
+    //    category names whenever a vendor column header didn't match the
+    //    known aliases and its index was absent from fieldIndices.
+    //
+    //    Rule: col 1 is a valid category only when:
+    //      • it is non-blank
+    //      • it does not look like a serial number
+    //      • col 1 is NOT the mapped name column (some sheets put "Item Name"
+    //        there — we detect that via the name index already being 1 AND
+    //        the row having actual item data in col 2+, i.e. the row is NOT
+    //        a pure category marker with mostly-empty fields).
     val col1 = row.getOrNull(1)?.trim().orEmpty()
-    if (col1.isNotBlank() && !col1.matches(SERIAL_LIKE_RX) && 1 !in fieldIndices) {
-        return col1
+    if (col1.isNotBlank() && !col1.matches(SERIAL_LIKE_RX)) {
+        // Extra guard: if col1 IS the item-name column AND col2+ carry field
+        // values, this row is more likely an item row misclassified as a
+        // category. In that case col1 holds the item name, not the category.
+        // We accept it only when the rest of the row is mostly empty (≤ 1
+        // non-blank cell beyond col 1) — the hallmark of a true category row.
+        val nonBlankBeyondCol1 = row.drop(2).count { it.isNotBlank() }
+        if (nonBlankBeyondCol1 <= 1) return col1
     }
 
-    // 3. Scan forward for the first non-blank, non-serial cell that isn't a
-    //    known field column. This rescues sheets where the category label sits
-    //    in col 2/3 because col 1 was reserved for "Item Name".
-    for (i in row.indices) {
-        if (i <= 0 || i in fieldIndices) continue
-        val v = row[i].trim()
-        if (v.isNotBlank() && !v.matches(SERIAL_LIKE_RX)) return v
-    }
+    // No reliable label found — caller keeps the previously-active category.
     return null
 }
 
@@ -591,7 +594,11 @@ private fun normalize(s: String): String = s.trim().lowercase()
     .replace(Regex("\\s+"), " ")
     .trim()
 
-private fun buildHeaderMapping(headers: List<String>, firstDataRow: List<String>?): HeaderMap {
+private fun buildHeaderMapping(
+    headers: List<String>,
+    firstDataRow: List<String>?,
+    sheetName: String = "",
+): HeaderMap {
     if (headers.isEmpty()) return HeaderMap()
 
     val norm = headers.map { normalize(it) }
@@ -634,11 +641,15 @@ private fun buildHeaderMapping(headers: List<String>, firstDataRow: List<String>
     // legitimate category names like "Cable Locator" or "Vendor Equipment".
     val rawSheetCategory = headers.firstOrNull()?.trim().orEmpty()
     val normalizedFirst = normalizeSerial(rawSheetCategory)
+    // For flat (non-hierarchical) sheets the Excel tab name (e.g. "MCB", "Wires")
+    // becomes the single category for every item on that sheet.
+    // For hierarchical sheets the category comes from integer-serial rows in the
+    // data, but we still fall back to sheetName when those rows are absent.
     val resolvedSheetCategory = when {
-        !hierarchical -> ""
+        !hierarchical -> sheetName
         normalizedFirst.matches(SERIAL_LIKE_RX) && headers.size > 1 ->
-            headers[1].trim().ifBlank { rawSheetCategory }
-        else -> rawSheetCategory
+            headers[1].trim().ifBlank { sheetName }
+        else -> rawSheetCategory.ifBlank { sheetName }
     }
 
     return HeaderMap(
@@ -658,21 +669,34 @@ private fun buildHeaderMapping(headers: List<String>, firstDataRow: List<String>
                               "qty", "stock", "in stock"),
         hsn            = find("hsn", "hsn code", "hsn no"),
         vendorName1    = find("vendorName1", "vendor name 1", "vendor name1",
-                              "vendor 1", "vendor", "vendor name"),
+                              "vendor 1", "vendor", "vendor name",
+                              // abbreviated / shorthand variants
+                              "v1 name", "v1name", "vname1", "vendor1", "vndr1",
+                              "vndr name 1", "vndr name1"),
         vendorContact1 = find("vendorContact1", "vendor contact 1", "vendor contact number 1",
                               "vendor contact number", "vendor contact",
-                              "vendor phone 1", "vendor phone", "contact 1", "contact"),
+                              "vendor phone 1", "vendor phone", "contact 1", "contact",
+                              "v1 contact", "v1 phone", "v1contact", "v1phone",
+                              "vendor1 phone", "vendor1 contact"),
         vendorGst1     = find("vendorGst1", "vendor gst 1", "vendor gst no 1",
-                              "vendor gst", "gst 1", "gst"),
+                              "vendor gst", "gst 1", "gst",
+                              "v1 gst", "v1gst", "vendor1 gst"),
         vendorAddress1 = find("vendorAddress1", "vendor address 1",
-                              "vendor address", "address 1", "address"),
-        vendorName2    = find("vendorName2", "vendor name 2", "vendor name2", "vendor 2"),
+                              "vendor address", "address 1", "address",
+                              "v1 address", "v1address", "vendor1 address"),
+        vendorName2    = find("vendorName2", "vendor name 2", "vendor name2", "vendor 2",
+                              "v2 name", "v2name", "vname2", "vendor2", "vndr2"),
         vendorContact2 = find("vendorContact2", "vendor contact 2", "vendor contact number 2",
-                              "vendor phone 2", "contact 2"),
-        vendorGst2     = find("vendorGst2", "vendor gst 2", "gst 2"),
-        vendorAddress2 = find("vendorAddress2", "vendor address 2", "address 2"),
+                              "vendor phone 2", "contact 2",
+                              "v2 contact", "v2 phone", "v2contact", "v2phone",
+                              "vendor2 phone", "vendor2 contact"),
+        vendorGst2     = find("vendorGst2", "vendor gst 2", "gst 2",
+                              "v2 gst", "v2gst", "vendor2 gst"),
+        vendorAddress2 = find("vendorAddress2", "vendor address 2", "address 2",
+                              "v2 address", "v2address", "vendor2 address"),
         vendorLocation = find("vendorLocation", "vendor location 1", "vendor location",
-                              "location 1", "location"),
+                              "location 1", "location",
+                              "v1 location", "v1location", "vendor1 location"),
     )
 }
 
@@ -739,11 +763,16 @@ private fun rowToSpareItem(
     // The fallbacks below only fire for malformed sheets where an item row
     // appeared with no preceding category marker.
     val rawCategory = currentCategory.ifBlank {
-        if (m.category >= 0) get(m.category).ifBlank { "Uncategorized" }
-        else m.sheetCategory.ifBlank { "Uncategorized" }
-    }
-    // Final guard: never let a bare serial number end up as the category title.
-    val category = if (rawCategory.matches(SERIAL_LIKE_RX)) "Uncategorized" else rawCategory
+        if (m.category >= 0) get(m.category)
+        else m.sheetCategory
+    }.trim()
+
+    // Skip items whose category we cannot determine — never invent a name.
+    // A blank or serial-only category means the sheet is malformed before
+    // this row (no integer category marker appeared yet).
+    if (rawCategory.isBlank() || rawCategory.matches(SERIAL_LIKE_RX)) return null
+
+    val category = rawCategory
 
     val priceText = get(m.price).replace(",", "").trim()
     val qtyText   = get(m.stockQty).replace(",", "").trim()

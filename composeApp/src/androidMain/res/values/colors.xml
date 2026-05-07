@@ -2,4 +2,7 @@
 <resources>
     <!-- Brand blue used as window background during cold-start -->
     <color name="splash_bg">#2979FF</color>
+
+    <!-- Tint for FCM "notification" payload (small icon background) -->
+    <color name="uw_notification_accent">#2979FF</color>
 </resources>

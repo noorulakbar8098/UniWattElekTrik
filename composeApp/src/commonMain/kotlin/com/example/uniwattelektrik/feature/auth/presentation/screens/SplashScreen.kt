@@ -1,5 +1,7 @@
 package com.example.uniwattelektrik.feature.auth.presentation.screens
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -36,12 +38,33 @@ import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
 import uniwattelektrik.composeapp.generated.resources.Res
 import uniwattelektrik.composeapp.generated.resources.app_logo3
+import com.example.uniwattelektrik.core.theme.AppTheme
+import com.example.uniwattelektrik.core.theme.AppShapes
+// ─── Design tokens — backed by enterprise system ────────────────────────────
+private val ScreenBg     = AppTheme.Bg
+private val CardBg       = AppTheme.Surface
+private val InkPrimary   = AppTheme.Ink900
+private val InkSecondary = AppTheme.Ink500
+private val InkMuted     = AppTheme.Ink300
+private val Brand        = AppTheme.Brand
+private val BrandDeep    = AppTheme.Brand700
+private val Brand50      = AppTheme.Brand50
+private val Success      = AppTheme.Success
+private val SuccessBg    = AppTheme.SuccessBg
+private val Warning      = AppTheme.Warning
+private val WarningBg    = AppTheme.WarningBg
+private val Danger       = AppTheme.Danger
+private val DangerBg     = AppTheme.DangerBg
+private val DividerSoft  = AppTheme.Ink100
+private val ShadowSoft   = AppTheme.ShadowMd
+private val GradientTop    = AppTheme.Brand
+private val GradientBottom = AppTheme.Navy
 
-private val GradientTop    = Color(0xFF2979FF)
-private val GradientBottom = Color(0xFF0A3D91)
+
 
 @Composable
 fun SplashScreen(onFinished: () -> Unit) {
+    TrackScreenPerformance("SplashScreen")
     com.example.uniwattelektrik.core.theme.SetStatusBar(
         color = GradientTop, darkIcons = false,
     )

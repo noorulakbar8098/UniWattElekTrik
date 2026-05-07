@@ -21,11 +21,14 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.launch
@@ -43,6 +46,7 @@ import com.example.uniwattelektrik.feature.admin.presentation.screens.AdminEmplo
 import com.example.uniwattelektrik.feature.admin.presentation.screens.AdminEmployeesScreen
 import com.example.uniwattelektrik.feature.admin.presentation.screens.AdminHomeScreen
 import com.example.uniwattelektrik.feature.admin.presentation.screens.AdminInventoryScreen
+import com.example.uniwattelektrik.feature.admin.presentation.screens.AdminLeaveApprovalsScreen
 import com.example.uniwattelektrik.feature.admin.presentation.screens.AdminTasksScreen
 import com.example.uniwattelektrik.feature.admin.presentation.screens.NewTaskScreen
 import com.example.uniwattelektrik.feature.auth.domain.model.User
@@ -74,7 +78,41 @@ fun AdminShell(
     LaunchedEffect(user.id) {
         inventoryVm.loadForAdmin(user.id)
     }
+
+    // ── FCM deep-link consumer ───────────────────────────────────────────────
+    // When a notification tap on Android publishes a route key into
+    // [DeepLinkBus], jump to the matching tab. Unknown keys are ignored
+    // (e.g. "leave" — handled by UserShell instead).
+    val deepLink by com.example.uniwattelektrik.core.notification.DeepLinkBus.route
+        .collectAsStateWithLifecycle()
+    LaunchedEffect(deepLink) {
+        when (deepLink) {
+            "home"       -> nav.selectTab(AdminRoute.Dashboard)
+            "tasks"      -> nav.selectTab(AdminRoute.Tasks)
+            "employees"  -> nav.selectTab(AdminRoute.Employees)
+            "attendance" -> nav.selectTab(AdminRoute.Attendance)
+            "inventory"  -> nav.selectTab(AdminRoute.Inventory)
+            "more"       -> nav.selectTab(AdminRoute.Profile)
+            else         -> return@LaunchedEffect
+        }
+        com.example.uniwattelektrik.core.notification.DeepLinkBus.consume()
+    }
+    // Re-subscribe + show shimmer whenever the app returns from background.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        workforceVm.refresh()
+    }
     val workforceLoading by workforceVm.loading.collectAsStateWithLifecycle()
+
+    // ── Free, in-app notifications ───────────────────────────────────────────
+    // No Cloud Functions, no Blaze plan. Each device runs Firestore listeners
+    // and posts a local NotificationCompat on relevant changes (new leave,
+    // task completed, low stock, late check-in). Started after sign-in,
+    // cancelled when the shell leaves composition or the uid changes.
+    val notifScope = rememberCoroutineScope()
+    DisposableEffect(user.id) {
+        AppContainer.adminNotificationsCoordinator.start(notifScope, user.id)
+        onDispose { AppContainer.adminNotificationsCoordinator.stop() }
+    }
 
     // ─── Excel import wiring ─────────────────────────────────────────────────
     val excelParser = remember { com.example.uniwattelektrik.core.platform.createExcelParser() }
@@ -83,7 +121,7 @@ fun AdminShell(
     val launchExcelPicker = com.example.uniwattelektrik.core.platform.rememberExcelFilePicker { uri ->
         coroutineScope.launch {
             try {
-                inventoryVm.stagedSheet = excelParser.parse(uri)
+                inventoryVm.stagedSheets = excelParser.parse(uri)
                 nav.navigate(AdminRoute.ImportSpareItemsPreview)
             } catch (e: Exception) {
                 snackbarHost.showSnackbar("Failed to read Excel: ${e.message ?: "unknown error"}")
@@ -136,7 +174,7 @@ fun AdminShell(
         PlatformBackHandler(enabled = !showAddEmployee.value && current != AdminRoute.Dashboard) {
             when (current) {
                 AdminRoute.ImportSpareItemsPreview -> {
-                    inventoryVm.stagedSheet = null
+                    inventoryVm.stagedSheets = null
                     nav.pop()
                 }
                 else -> {
@@ -176,6 +214,8 @@ fun AdminShell(
                     onEmployeeClick     = { id -> nav.navigate(AdminRoute.EmployeeDetail(id)) },
                     onAttendanceClick   = { nav.selectTab(AdminRoute.Attendance) },
                     onSpareClick        = { item -> nav.navigate(AdminRoute.SpareItemDetail(item)) },
+                    onLeaveRequestsClick = { nav.navigate(AdminRoute.LeaveApprovals()) },
+                    onViewAllTasks      = { nav.selectTab(AdminRoute.Tasks) },
                 )
                 AdminRoute.Employees -> AdminEmployeesScreen(
                     adminUid        = user.id,
@@ -189,6 +229,7 @@ fun AdminShell(
                     onAssign     = { nav.navigate(AdminRoute.NewTask()) },
                     onBack       = { nav.selectTab(AdminRoute.Dashboard) },
                     onTaskClick  = { id -> nav.navigate(AdminRoute.TaskDetail(id)) },
+                    onEditTask   = { id -> nav.navigate(AdminRoute.NewTask(editTaskId = id)) },
                 )
                 is AdminRoute.TaskDetail -> TaskDetailScreen(
                     taskId      = r.taskId,
@@ -228,11 +269,11 @@ fun AdminShell(
                         adminId     = user.id,
                         inventoryVm = inventoryVm,
                         onBack      = {
-                            inventoryVm.stagedSheet = null
+                            inventoryVm.stagedSheets = null
                             nav.pop()
                         },
                         onSuccess   = { n ->
-                            inventoryVm.stagedSheet = null
+                            inventoryVm.stagedSheets = null
                             nav.pop()
                             coroutineScope.launch { snackbarHost.showSnackbar("Imported $n spares") }
                         },
@@ -294,6 +335,13 @@ fun AdminShell(
                     employeeId  = r.employeeId,
                     workforceVm = workforceVm,
                     onBack      = { nav.pop() },
+                    adminUid    = user.id,
+                )
+                is AdminRoute.LeaveApprovals -> AdminLeaveApprovalsScreen(
+                    workforceVm         = workforceVm,
+                    adminUid            = user.id,
+                    onBack              = { nav.pop() },
+                    initialStatusFilter = r.initialStatusFilter,
                 )
                 AdminRoute.Notifications -> NotificationsScreen(onBack = { nav.pop() })
                 AdminRoute.Financials -> EmptyState(
@@ -321,12 +369,18 @@ fun AdminShell(
             )
         }
 
-        if (workforceLoading) {
+        // Dashboard handles its own below-header shimmer; skip full-screen overlay there.
+        if (workforceLoading && current != AdminRoute.Dashboard) {
             val skeletonType = when (current) {
-                AdminRoute.Dashboard -> SkeletonType.Dashboard
+                AdminRoute.Employees          -> SkeletonType.EmployeeList
+                is AdminRoute.EmployeeDetail  -> SkeletonType.EmployeeDetail
+                AdminRoute.Tasks              -> SkeletonType.TaskKanban
+                AdminRoute.Attendance         -> SkeletonType.AttendanceScreen
+                AdminRoute.Inventory          -> SkeletonType.InventoryList
+                is AdminRoute.TaskDetail      -> SkeletonType.TaskDetail
                 is AdminRoute.NewTask,
-                is AdminRoute.SpareItemForm -> SkeletonType.Form
-                else -> SkeletonType.List
+                is AdminRoute.SpareItemForm   -> SkeletonType.Form
+                else                          -> SkeletonType.List
             }
             ScreenSkeletonOverlay(type = skeletonType, message = "Loading workspace...")
         }

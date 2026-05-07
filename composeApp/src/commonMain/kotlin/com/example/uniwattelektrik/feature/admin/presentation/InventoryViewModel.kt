@@ -40,8 +40,8 @@ class InventoryViewModel(
     val error: StateFlow<String?> = _error.asStateFlow()
 
     // ─── Excel import state ──────────────────────────────────────────────────
-    /** Parsed sheet held while user navigates from picker → preview screen. */
-    var stagedSheet: com.example.uniwattelektrik.core.platform.ParsedSheet? = null
+    /** All parsed sheets held while user navigates from picker → preview screen. */
+    var stagedSheets: List<com.example.uniwattelektrik.core.platform.ParsedSheet>? = null
 
     private val _importInProgress = MutableStateFlow(false)
     val importInProgress: StateFlow<Boolean> = _importInProgress.asStateFlow()

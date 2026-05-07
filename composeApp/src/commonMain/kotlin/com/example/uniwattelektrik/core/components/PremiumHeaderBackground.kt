@@ -16,37 +16,24 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-/* ── Shared header palette — used by every screen-level header ──────────── */
-private val HeaderGradTopLeft     = Color(0xFF3A6BFF)
-private val HeaderGradMid         = Color(0xFF2F5BEA)
-private val HeaderGradBottomRight = Color(0xFF244EDC)
+// Enterprise header palette -- deep navy to brand blue (gradient allowed for headers only)
+private val HeaderStart = Color(0xFF0F2B6B)
+private val HeaderEnd   = Color(0xFF1A6BF5)
 
-/** Status-bar tint that exactly matches the top of [PremiumHeaderBackground]. */
-val PremiumHeaderStatusBarColor: Color = HeaderGradTopLeft
+/** Status-bar tint matches the top of [PremiumHeaderBackground]. */
+val PremiumHeaderStatusBarColor: Color = HeaderStart
 
 /**
- * The single source-of-truth header background used across the entire app.
+ * App-wide screen header background.
  *
- * Composed of:
- *  • A diagonal 3-stop gradient (top-left → bottom-right)
- *  • A primary "sunlight" radial glow at the top-left
- *  • A secondary soft glow slightly offset
- *  • A subtle radial highlight in the top-right corner
- *  • Three decorative outline circles (atmospheric "vector" rings)
- *  • Optional rounded bottom corners
- *
- * Place this at the top of any screen — pass back-button / title /
- * actions into [content] so each screen keeps its own controls while
- * sharing the same premium fintech look.
- *
- * If [roundedBottom] is `false`, the background paints as a flat strip
- * (used by full-screen flows like the multi-step forms).
+ * Clean diagonal gradient (navy to blue) with a single subtle light arc.
+ * No radial glows, no heavy decorative rings -- enterprise grade.
  */
 @Composable
 fun PremiumHeaderBackground(
     modifier: Modifier = Modifier,
     roundedBottom: Boolean = true,
-    cornerRadius: Dp = 30.dp,
+    cornerRadius: Dp = 24.dp,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val shape = if (roundedBottom)
@@ -59,66 +46,28 @@ fun PremiumHeaderBackground(
             .clip(shape)
             .background(
                 Brush.linearGradient(
-                    colorStops = arrayOf(
-                        0.0f  to HeaderGradTopLeft,
-                        0.55f to HeaderGradMid,
-                        1.0f  to HeaderGradBottomRight,
-                    ),
-                    start = Offset(0f, 0f),
-                    end   = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
+                    colors = listOf(HeaderStart, HeaderEnd),
+                    start  = Offset(0f, 0f),
+                    end    = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
                 ),
             )
             .drawBehind {
-                // 1. Primary light glow — top-left "sunlight" source.
+                // Single soft arc -- top-right atmospheric highlight
                 drawCircle(
                     brush = Brush.radialGradient(
-                        colors = listOf(Color(0x33FFFFFF), Color(0x00FFFFFF)),
-                        center = Offset(size.width * 0.05f, size.height * 0.05f),
-                        radius = size.width * 1.10f,
+                        colors = listOf(Color(0x18FFFFFF), Color(0x00FFFFFF)),
+                        center = Offset(size.width * 0.88f, 0f),
+                        radius = size.width * 0.60f,
                     ),
-                    center = Offset(size.width * 0.05f, size.height * 0.05f),
-                    radius = size.width * 1.10f,
+                    center = Offset(size.width * 0.88f, 0f),
+                    radius = size.width * 0.60f,
                 )
-                // 2. Secondary soft glow — slightly offset.
+                // One decorative outline ring -- bottom left
                 drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(Color(0x1AFFFFFF), Color(0x00FFFFFF)),
-                        center = Offset(size.width * 0.30f, size.height * 0.18f),
-                        radius = size.width * 0.65f,
-                    ),
-                    center = Offset(size.width * 0.30f, size.height * 0.18f),
-                    radius = size.width * 0.65f,
-                )
-
-                // 3. Decorative atmospheric outline rings.
-                drawCircle(
-                    color  = Color(0x14FFFFFF),
-                    center = Offset(size.width * 0.18f, size.height * 0.45f),
-                    radius = size.width * 0.55f,
-                    style  = Stroke(width = 1.2.dp.toPx()),
-                )
-                drawCircle(
-                    color  = Color(0x0FFFFFFF),
-                    center = Offset(size.width * (-0.05f), size.height * 0.78f),
-                    radius = size.width * 0.42f,
+                    color  = Color(0x10FFFFFF),
+                    center = Offset(size.width * 0.10f, size.height * 0.90f),
+                    radius = size.width * 0.40f,
                     style  = Stroke(width = 1.dp.toPx()),
-                )
-                drawCircle(
-                    color  = Color(0x14FFFFFF),
-                    center = Offset(size.width * 0.92f, size.height * (-0.10f)),
-                    radius = size.width * 0.42f,
-                    style  = Stroke(width = 1.2.dp.toPx()),
-                )
-
-                // 4. Faint top-right radial highlight.
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(Color(0x0DFFFFFF), Color(0x00FFFFFF)),
-                        center = Offset(size.width * 0.95f, size.height * 0.10f),
-                        radius = size.width * 0.55f,
-                    ),
-                    center = Offset(size.width * 0.95f, size.height * 0.10f),
-                    radius = size.width * 0.55f,
                 )
             },
         content = content,

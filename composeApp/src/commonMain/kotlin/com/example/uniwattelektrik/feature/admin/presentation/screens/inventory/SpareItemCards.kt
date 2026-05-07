@@ -41,42 +41,42 @@ import com.example.uniwattelektrik.core.theme.AppTheme
  * Stock health levels used for color-coded status feedback in cards.
  *
  *  - [OutOfStock]   qty == 0          → red
- *  - [Low]          qty in 1..LowMax  → amber
+ *  - [Success]          qty in 1..LowMax  → amber
  *  - [InStock]      qty > LowMax      → green
  */
-enum class StockStatus { OutOfStock, Low, InStock }
+enum class StockStatus { OutOfStock, Success, InStock }
 
 private const val LOW_STOCK_THRESHOLD = 20
 
 fun SpareItem.stockStatus(lowThreshold: Int = LOW_STOCK_THRESHOLD): StockStatus = when {
     stockQty <= 0           -> StockStatus.OutOfStock
-    stockQty < lowThreshold -> StockStatus.Low
+    stockQty < lowThreshold -> StockStatus.Success
     else                    -> StockStatus.InStock
 }
 
 @Composable
 fun StockStatus.color(): Color = when (this) {
-    StockStatus.OutOfStock -> AppTheme.High
-    StockStatus.Low        -> AppTheme.Med
-    StockStatus.InStock    -> AppTheme.Low
+    StockStatus.OutOfStock -> AppTheme.Danger
+    StockStatus.Success        -> AppTheme.Warning
+    StockStatus.InStock    -> AppTheme.Success
 }
 
 @Composable
 fun StockStatus.bgColor(): Color = when (this) {
-    StockStatus.OutOfStock -> AppTheme.HighBg
-    StockStatus.Low        -> AppTheme.MedBg
-    StockStatus.InStock    -> AppTheme.LowBg
+    StockStatus.OutOfStock -> AppTheme.DangerBg
+    StockStatus.Success        -> AppTheme.WarningBg
+    StockStatus.InStock    -> AppTheme.SuccessBg
 }
 
 fun StockStatus.label(): String = when (this) {
     StockStatus.OutOfStock -> "Out of Stock"
-    StockStatus.Low        -> "Low Stock"
+    StockStatus.Success        -> "Success Stock"
     StockStatus.InStock    -> "In Stock"
 }
 
 fun StockStatus.icon(): ImageVector = when (this) {
     StockStatus.OutOfStock -> Icons.Outlined.ErrorOutline
-    StockStatus.Low        -> Icons.Outlined.WarningAmber
+    StockStatus.Success        -> Icons.Outlined.WarningAmber
     StockStatus.InStock    -> Icons.Outlined.CheckCircle
 }
 
@@ -120,7 +120,7 @@ fun MinimalSpareCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(6.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowSpotSoft)
+            .shadow(6.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowSm)
             .clip(shape)
             .background(cardBg)
             .then(
@@ -254,7 +254,7 @@ fun SelectionActionBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(10.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowSpotSoft)
+            .shadow(10.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowSm)
             .clip(shape)
             .background(AppTheme.Ink900)
             .padding(horizontal = 14.dp, vertical = 10.dp),
@@ -309,7 +309,7 @@ fun SelectionActionBar(
         Box(
             modifier = Modifier
                 .clip(CircleShape)
-                .background(AppTheme.High)
+                .background(AppTheme.Danger)
                 .premiumPress(onClick = onDelete, enabled = selectedCount > 0)
                 .padding(horizontal = 14.dp, vertical = 8.dp),
         ) {

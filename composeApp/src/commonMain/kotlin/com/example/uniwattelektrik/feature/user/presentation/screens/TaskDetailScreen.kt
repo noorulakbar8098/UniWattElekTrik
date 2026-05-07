@@ -1,6 +1,10 @@
 package com.example.uniwattelektrik.feature.user.presentation.screens
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import com.example.uniwattelektrik.core.theme.appScreenBackground
+import com.example.uniwattelektrik.core.theme.AppShapes
+import com.example.uniwattelektrik.core.theme.AppTheme
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -36,10 +40,12 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -73,26 +79,28 @@ import com.example.uniwattelektrik.platform.LocationProvider
 import kotlinx.coroutines.launch
 import kotlinx.datetime.toLocalDateTime
 import kotlin.math.absoluteValue
+// ─── Design tokens — backed by enterprise system ────────────────────────────
+private val ScreenBg     = AppTheme.Bg
+private val CardBg       = AppTheme.Surface
+private val InkPrimary   = AppTheme.Ink900
+private val InkSecondary = AppTheme.Ink500
+private val InkMuted     = AppTheme.Ink300
+private val Brand        = AppTheme.Brand
+private val BrandDeep    = AppTheme.Brand700
+private val Brand50      = AppTheme.Brand50
+private val Success      = AppTheme.Success
+private val SuccessBg    = AppTheme.SuccessBg
+private val Warning      = AppTheme.Warning
+private val WarningBg    = AppTheme.WarningBg
+private val Danger       = AppTheme.Danger
+private val DangerBg     = AppTheme.DangerBg
+private val DividerSoft  = AppTheme.Ink100
+private val ShadowSoft   = AppTheme.ShadowMd
+private val Purple       = AppTheme.Violet
+private val PurpleBg     = AppTheme.PriorityUrgentBg
+
 
 /* ── Design tokens — matched 1:1 with AdminEmployeeDetailScreen ────────── */
-private val ScreenBg     = Color(0xFFF4F7FB)
-private val CardBg       = Color(0xFFFFFFFF)
-private val InkPrimary   = Color(0xFF1A2B49)
-private val InkSecondary = Color(0xFF6B7A99)
-private val InkMuted     = Color(0xFF94A3B8)
-private val Brand        = Color(0xFF3B82F6)
-private val BrandDeep    = Color(0xFF1D4ED8)
-private val BrandDark    = Color(0xFF0F172A)
-private val Brand50      = Color(0xFFE6F0FE)
-private val Success      = Color(0xFF22C55E)
-private val SuccessBg    = Color(0xFFDCFCE7)
-private val Warning      = Color(0xFFF59E0B)
-private val WarningBg    = Color(0xFFFEF3C7)
-private val Danger       = Color(0xFFEF4444)
-private val DangerBg     = Color(0xFFFEE2E2)
-private val Purple       = Color(0xFF8B5CF6)
-private val ShadowSoft   = Color(0x14172C50)
-private val DividerSoft  = Color(0xFFE2E8F0)
 
 /** Distinguishes Admin vs User viewers — drives which actions are visible. */
 enum class TaskDetailRole { Admin, User }
@@ -121,6 +129,7 @@ fun TaskDetailScreen(
      */
     onEdit: ((taskId: String) -> Unit)? = null,
 ) {
+    TrackScreenPerformance("TaskDetailScreen")
     val liveTasks by (workforceVm?.tasks?.collectAsStateWithLifecycle()
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<TaskRecord>()) }
             .collectAsStateWithLifecycle())
@@ -503,48 +512,17 @@ fun TaskDetailScreen(
         // Bottom action row — User-only. Admin sees no action buttons here.
         if (viewerRole == TaskDetailRole.User && live != null) {
             item {
-                val isTodo       = live.status == "Todo"
-                val isInProgress = live.status == "InProgress"
-                val isDone       = live.status == "Done"
-                Row(
-                    modifier = Modifier
-                        .padding(horizontal = 16.dp)
-                        .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    if (isTodo) {
-                        BottomAction(
-                            icon = Icons.Filled.Check, label = "Accept",
-                            tint = Brand, bg = Brand50,
-                            modifier = Modifier.weight(1f),
-                            onClick = {
-                                scope.launch {
-                                    val loc = runCatching { locationProvider.getCurrentLocation() }.getOrNull()
-                                    workforceVm?.acceptTask(
-                                        taskId = live.id,
-                                        lat    = loc?.latitude,
-                                        lon    = loc?.longitude,
-                                    )
-                                }
-                            },
-                        )
-                    }
-                    if (isInProgress) {
-                        BottomAction(
-                            icon = Icons.Filled.Check, label = "Complete",
-                            tint = Success, bg = SuccessBg,
-                            modifier = Modifier.weight(1f),
-                            onClick = { onStartWork(live.id) },
-                        )
-                    }
-                    if (isDone) {
-                        BottomAction(
-                            icon = Icons.Filled.Check, label = "Completed",
-                            tint = Success, bg = SuccessBg,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                }
+                Spacer(Modifier.height(4.dp))
+                UserTaskActionBar(
+                    status     = live.status,
+                    taskId     = live.id,
+                    adminUid   = adminUid,
+                    userId     = currentUserId.takeIf { it.isNotBlank() },
+                    workforceVm = workforceVm,
+                    locationProvider = locationProvider,
+                    scope      = scope,
+                    onStartWork = onStartWork,
+                )
             }
         }
     }
@@ -1080,15 +1058,188 @@ private fun BottomAction(
 }
 
 /* ─────────────────────────────────────────────────────────────────────── *
+ *  PREMIUM USER TASK ACTION BAR
+ * ─────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Premium gradient action bar shown at the bottom of TaskDetailScreen for
+ * User-role viewers. Buttons map directly to Kanban status transitions:
+ *
+ *  Todo      → "Accept" (→ InProgress) + "Escalate" (→ InReview)
+ *  InProgress → "Completed" (→ Done via sign-off flow) + "Escalate" (→ InReview)
+ *  InReview  → "Completed" (→ Done via sign-off flow)
+ *  Done      → "Reopen" (→ Todo)
+ */
+@Composable
+private fun UserTaskActionBar(
+    status: String,
+    taskId: String,
+    adminUid: String,
+    userId: String?,
+    workforceVm: WorkforceViewModel?,
+    locationProvider: LocationProvider,
+    scope: kotlinx.coroutines.CoroutineScope,
+    onStartWork: (String) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        when (status) {
+            "Todo" -> {
+                // Primary: Accept → InProgress
+                PremiumActionButton(
+                    label     = "Accept Task",
+                    icon      = Icons.Filled.PlayArrow,
+                    gradient  = listOf(Color(0xFF3B82F6), Color(0xFF1D4ED8)),
+                    modifier  = Modifier.fillMaxWidth(),
+                    onClick   = {
+                        scope.launch {
+                            val loc = runCatching { locationProvider.getCurrentLocation() }.getOrNull()
+                            workforceVm?.acceptTask(
+                                taskId = taskId,
+                                lat    = loc?.latitude,
+                                lon    = loc?.longitude,
+                            )
+                        }
+                    },
+                )
+                // Secondary: Escalate → InReview
+                PremiumActionButton(
+                    label     = "Escalate to Review",
+                    icon      = Icons.Filled.Upload,
+                    gradient  = listOf(Color(0xFFF59E0B), Color(0xFFD97706)),
+                    modifier  = Modifier.fillMaxWidth(),
+                    onClick   = {
+                        workforceVm?.changeTaskStatus(
+                            taskId    = taskId,
+                            adminUid  = adminUid,
+                            userId    = userId,
+                            newStatus = "InReview",
+                        )
+                    },
+                )
+            }
+
+            "InProgress" -> {
+                // Primary: Completed → Done (sign-off flow)
+                PremiumActionButton(
+                    label    = "Mark Completed",
+                    icon     = Icons.Filled.Check,
+                    gradient = listOf(Color(0xFF22C55E), Color(0xFF15803D)),
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick  = { onStartWork(taskId) },
+                )
+                // Secondary: Escalate → InReview
+                PremiumActionButton(
+                    label    = "Escalate to Review",
+                    icon     = Icons.Filled.Upload,
+                    gradient = listOf(Color(0xFFF59E0B), Color(0xFFD97706)),
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick  = {
+                        workforceVm?.changeTaskStatus(
+                            taskId    = taskId,
+                            adminUid  = adminUid,
+                            userId    = userId,
+                            newStatus = "InReview",
+                        )
+                    },
+                )
+            }
+
+            "InReview" -> {
+                // Primary: Completed → Done (sign-off flow)
+                PremiumActionButton(
+                    label    = "Mark Completed",
+                    icon     = Icons.Filled.Check,
+                    gradient = listOf(Color(0xFF22C55E), Color(0xFF15803D)),
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick  = { onStartWork(taskId) },
+                )
+            }
+
+            "Done" -> {
+                // Reopen → Todo
+                PremiumActionButton(
+                    label    = "Reopen Task",
+                    icon     = Icons.Filled.Refresh,
+                    gradient = listOf(Color(0xFF64748B), Color(0xFF334155)),
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick  = {
+                        workforceVm?.changeTaskStatus(
+                            taskId    = taskId,
+                            adminUid  = adminUid,
+                            userId    = userId,
+                            newStatus = "Todo",
+                        )
+                    },
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
+/**
+ * Premium full-width gradient button with icon + label, rounded corners,
+ * and a multi-layer drop shadow. Used exclusively in [UserTaskActionBar].
+ */
+@Composable
+private fun PremiumActionButton(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    gradient: List<Color>,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit = {},
+) {
+    Row(
+        modifier = modifier
+            .height(52.dp)
+            .shadow(12.dp, RoundedCornerShape(16.dp), spotColor = gradient.last().copy(alpha = 0.40f))
+            .clip(RoundedCornerShape(16.dp))
+            .background(Brush.horizontalGradient(gradient))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.20f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            label,
+            color = Color.White,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.3.sp,
+        )
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────── *
  *  HELPERS
  * ─────────────────────────────────────────────────────────────────────── */
 
 /** Adapts a real Firestore [TaskRecord] to the SampleTask shape used by this screen. */
 private fun sampleFromRecord(t: TaskRecord): com.example.uniwattelektrik.core.sample.SampleTask {
     val priority = when (t.priority.lowercase()) {
-        "high"   -> com.example.uniwattelektrik.core.sample.TaskPriority.High
-        "low"    -> com.example.uniwattelektrik.core.sample.TaskPriority.Low
-        else     -> com.example.uniwattelektrik.core.sample.TaskPriority.Med
+        "high"   -> com.example.uniwattelektrik.core.sample.TaskPriority.Danger
+        "low"    -> com.example.uniwattelektrik.core.sample.TaskPriority.Success
+        else     -> com.example.uniwattelektrik.core.sample.TaskPriority.Warning
     }
     val status = when (t.status) {
         "InProgress" -> com.example.uniwattelektrik.core.sample.TaskStatus.InProgress

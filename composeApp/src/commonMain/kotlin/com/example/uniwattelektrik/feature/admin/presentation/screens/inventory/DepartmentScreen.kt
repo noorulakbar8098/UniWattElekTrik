@@ -1,5 +1,7 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens.inventory
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -71,6 +73,7 @@ fun DepartmentScreen(
     adminId: String,
     modifier: Modifier = Modifier,
 ) {
+    TrackScreenPerformance("DepartmentScreen")
     SetStatusBar(color = PremiumHeaderStatusBarColor, darkIcons = false)
 
     val departments by inventoryVm.departments.collectAsState()
@@ -112,7 +115,7 @@ fun DepartmentScreen(
                     inventoryVm.deleteDepartment(adminId, dept.id)
                     deleteTarget = null
                 }) {
-                    Text("Delete", color = AppTheme.High, fontWeight = FontWeight.SemiBold)
+                    Text("Delete", color = AppTheme.Danger, fontWeight = FontWeight.SemiBold)
                 }
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } },
@@ -193,7 +196,7 @@ private fun DepartmentCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(6.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowSpotSoft)
+            .shadow(6.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowSm)
             .clip(shape)
             .background(Color.White)
             .premiumPress(onClick = {}) // Ripple + Scale effect
@@ -231,7 +234,7 @@ private fun DepartmentCard(
             
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 IconAction(icon = Icons.Outlined.Edit, tint = AppTheme.Brand, onClick = onEdit)
-                IconAction(icon = Icons.Outlined.Delete, tint = AppTheme.High, onClick = onDelete)
+                IconAction(icon = Icons.Outlined.Delete, tint = AppTheme.Danger, onClick = onDelete)
             }
         }
     }
@@ -263,7 +266,7 @@ private fun DepartmentFormDialog(
                     placeholder = { Text("e.g. Electrical", color = AppTheme.Ink300, fontSize = 15.sp) },
                     singleLine = true,
                     isError = error.isNotEmpty(),
-                    supportingText = if (error.isNotEmpty()) {{ Text(error, color = AppTheme.High, fontSize = 12.sp) }} else null,
+                    supportingText = if (error.isNotEmpty()) {{ Text(error, color = AppTheme.Danger, fontSize = 12.sp) }} else null,
                     keyboardOptions = KeyboardOptions(
                         capitalization = KeyboardCapitalization.Words,
                         imeAction = ImeAction.Done,

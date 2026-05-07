@@ -1,5 +1,7 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens.inventory
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
@@ -86,6 +88,7 @@ fun SpareItemDetailScreen(
     onAddVendor: () -> Unit = onEdit,
     modifier: Modifier = Modifier,
 ) {
+    TrackScreenPerformance("SpareItemDetailScreen")
     SetStatusBar(color = AppTheme.Brand, darkIcons = false)
 
     val status = item.stockStatus()
@@ -101,7 +104,7 @@ fun SpareItemDetailScreen(
                 TextButton(onClick = {
                     deleteOpen = false
                     onDelete()
-                }) { Text("Delete", color = AppTheme.High, fontWeight = FontWeight.SemiBold) }
+                }) { Text("Delete", color = AppTheme.Danger, fontWeight = FontWeight.SemiBold) }
             },
             dismissButton = { TextButton(onClick = { deleteOpen = false }) { Text("Cancel") } },
         )
@@ -525,14 +528,14 @@ private fun ActionsSection(
                 icon = Icons.Outlined.Edit,
                 title = "Edit Item",
                 subtitle = "Modify specs, price, HSN…",
-                accent = AppTheme.Med,
+                accent = AppTheme.Warning,
                 onClick = onEdit,
             )
             ActionRow(
                 icon = Icons.Outlined.AddBusiness,
                 title = "Add Vendor",
                 subtitle = "Record a supplier or contact",
-                accent = AppTheme.Low,
+                accent = AppTheme.Success,
                 onClick = onAddVendor,
             )
         }
@@ -582,7 +585,7 @@ private fun SoftCard(content: @Composable androidx.compose.foundation.layout.Col
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(8.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowSpotSoft)
+            .shadow(8.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowSm)
             .clip(shape)
             .background(Color.White)
             .padding(18.dp),

@@ -1,5 +1,7 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import androidx.compose.animation.core.EaseOutBack
 import androidx.compose.animation.core.EaseOutCubic
 import androidx.compose.animation.core.LinearEasing
@@ -34,6 +36,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import com.example.uniwattelektrik.core.components.AppPullToRefresh
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +44,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.BeachAccess
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.WarningAmber
@@ -67,6 +71,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.uniwattelektrik.core.theme.AppTheme
+import com.example.uniwattelektrik.core.theme.AppShapes
 import com.example.uniwattelektrik.core.theme.AppTypography
 import com.example.uniwattelektrik.core.theme.SetStatusBar
 import com.example.uniwattelektrik.feature.auth.domain.model.User
@@ -79,61 +85,55 @@ import com.example.uniwattelektrik.feature.admin.presentation.screens.components
 import com.example.uniwattelektrik.feature.admin.presentation.screens.components.NeedsAttentionItem
 import com.example.uniwattelektrik.feature.admin.presentation.screens.components.NeedsAttentionStrip
 import com.example.uniwattelektrik.feature.admin.presentation.screens.components.PerformanceInsightCard
+import com.example.uniwattelektrik.feature.admin.presentation.screens.components.PerformanceChartSection
 import com.example.uniwattelektrik.feature.admin.presentation.screens.components.Sparkline
-import com.example.uniwattelektrik.feature.admin.presentation.screens.components.YourDayCard
 import com.example.uniwattelektrik.feature.admin.presentation.screens.components.applyFilter
 import com.example.uniwattelektrik.feature.admin.presentation.screens.components.buildNeedsAttention
 import com.example.uniwattelektrik.feature.admin.presentation.screens.components.buildPerformanceInsight
-import com.example.uniwattelektrik.feature.admin.presentation.screens.components.buildYourDay
 import com.example.uniwattelektrik.feature.admin.presentation.screens.components.sparkline7Day
 import com.example.uniwattelektrik.platform.minutesOfDay
 import com.example.uniwattelektrik.platform.nowEpochMillis
+// ─── Design tokens — backed by enterprise system ────────────────────────────
+private val ScreenBg     = AppTheme.Bg
+private val CardBg       = AppTheme.Surface
+private val InkPrimary   = AppTheme.Ink900
+private val InkSecondary = AppTheme.Ink500
+private val InkMuted     = AppTheme.Ink300
+private val Brand        = AppTheme.Brand
+private val BrandDeep    = AppTheme.Brand700
+private val Brand50      = AppTheme.Brand50
+private val Success      = AppTheme.Success
+private val SuccessBg    = AppTheme.SuccessBg
+private val Warning      = AppTheme.Warning
+private val WarningBg    = AppTheme.WarningBg
+private val Danger       = AppTheme.Danger
+private val DangerBg     = AppTheme.DangerBg
+private val DividerSoft  = AppTheme.Ink100
+private val ShadowSoft   = AppTheme.ShadowMd
+// Previously missing — now resolved via design system
+private val Highlight    = AppTheme.Brand
+private val HighlightLt  = AppTheme.Brand50
+private val NavyMid      = AppTheme.Ink700
+private val Navy         = AppTheme.Navy
+private val InnerHi      = Color.Transparent
+private val GlowShadow   = Color.Transparent
+private val SoftShadow1  = AppTheme.ShadowMd
+private val SoftShadow2  = AppTheme.ShadowSm
+private val CardTop      = AppTheme.Surface
+private val CardMid      = AppTheme.Surface
+private val CardBottom   = AppTheme.Surface
+private val CardBorder   = AppTheme.Ink100
+private val ScreenBg0    = AppTheme.Bg
+private val ScreenBg1    = AppTheme.Bg
+private val ScreenBg2    = AppTheme.Bg
+private val ScreenBg3    = AppTheme.Bg
+private val ScreenBg4    = AppTheme.BgSecondary
+
 
 /* ── Premium fintech design tokens ─────────────────────────────────────── */
 // Premium soft-blue header — multi-tone, never flat or heavy.
 // (top-left)  3A8DFF → (center) 4F7CFF → (subtle fade) 6B8CFF
 /* Premium fintech header — diagonal blue with radial light overlays. */
-private val HeaderGrad0  = Color(0xFF3A6BFF)   // top-left, lighter blue
-private val HeaderGrad1  = Color(0xFF2F5BEA)   // center
-private val HeaderGrad2  = Color(0xFF244EDC)   // bottom-right, deeper blue
-private val ScreenBg     = Color(0xFFF4F7FB)   // legacy flat fallback (no longer used directly)
-// Whole-screen "blue · white · dark-blue" weave — kept VERY light so cards still pop.
-private val ScreenBg0 = Color(0xFFF4F6FF)  // very light blue-lavender tint
-private val ScreenBg1 = Color(0xFFE3E9FF)  // soft lavender-blue
-private val ScreenBg2 = Color(0xFFDDE6F8)  // balanced neutral blend
-private val ScreenBg3 = Color(0xFFD2DBF0)  // deeper cool tone
-private val ScreenBg4 = Color(0xFFC4CFE6)  // medium depth (for contrast)
-//
-//private val ScreenBg0 = Color(0xFFE9EEFF)  // light but noticeable tint
-//private val ScreenBg1 = Color(0xFFD6DEFF)  // stronger lavender-blue
-//private val ScreenBg2 = Color(0xFFC9D4F5)  // balanced mid tone
-//private val ScreenBg3 = Color(0xFFB8C6EA)  // deeper soft blue
-//private val ScreenBg4 = Color(0xFFA6B6DA)  // medium-dark (depth layer)
-// Frosted-glass card surface — a 40 %-grey blend of white + cool slate.
-// The visible gradient is far more pronounced than pure white, giving every
-// card on the Home screen a calm, premium "smoke" look.
-private val CardTop    = Color(0xFFF1F5F9)   // slate-100 (top, soft white-grey)
-private val CardMid    = Color(0xFFE7ECF3)   // 40 % grey blend (mid)
-private val CardBottom = Color(0xFFDCE3EC)   // slate-200/300 mix (bottom)
-private val InkPrimary   = Color(0xFF0F172A)
-private val InkSecondary = Color(0xFF64748B)
-private val InkMuted     = Color(0xFF94A3B8)
-private val Highlight    = Color(0xFF2979FF)
-private val HighlightLt  = Color(0xFF6AA9FF)
-private val Success      = Color(0xFF22C55E)
-private val Warning      = Color(0xFFF59E0B)
-private val Danger       = Color(0xFFEF4444)
-private val Navy         = Color(0xFF0F172A)
-private val NavyMid      = Color(0xFF334155)
-// Premium 3-layer shadow system — soft, wide, diffused, never heavy.
-private val SoftShadow1   = Color(0x14000000)   // 8 % black · main soft (0 12 30)
-private val SoftShadow2   = Color(0x0D000000)   // 5 % black · secondary spread (0 4 10)
-private val GlowShadow    = Color(0x0F3A8DFF)   // 6 % brand blue · subtle ambient glow (0 0 40)
-private val CardBorder    = Color(0xFFFFFFFF)   // solid white · clearly defines card corners
-private val ShadowSpot   = Color(0x40000000)        // legacy — kept only for header bell glass
-private val ShadowAmbient = Color(0x14000000)
-private val InnerHi      = Color(0xB3FFFFFF)        // 70 % white inner top highlight
-private val Glass        = Color(0x33FFFFFF)        // header icon glass
 
 /* ──────────────────────────────────────────────────────────────────────────
  *  Premium card modifier — 3-layer soft shadow + gradient bg + subtle border
@@ -193,18 +193,24 @@ fun AdminHomeScreen(
     onEmployeeClick: (String) -> Unit = {},
     onAttendanceClick: () -> Unit = {},
     onSpareClick: (com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItem) -> Unit = {},
+    onLeaveRequestsClick: () -> Unit = {},
+    onViewAllTasks: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val employees by workforceVm.employees.collectAsStateWithLifecycle()
-    val tasks     by workforceVm.tasks.collectAsStateWithLifecycle()
-    val attendance by workforceVm.attendance.collectAsStateWithLifecycle()
-    val spareItems by inventoryVm.spareItems.collectAsStateWithLifecycle()
+    TrackScreenPerformance("AdminHomeScreen")
+    val employees      by workforceVm.employees.collectAsStateWithLifecycle()
+    val tasks          by workforceVm.tasks.collectAsStateWithLifecycle()
+    val attendance     by workforceVm.attendance.collectAsStateWithLifecycle()
+    val spareItems     by inventoryVm.spareItems.collectAsStateWithLifecycle()
+    val leaveRequests  by workforceVm.leaveRequests.collectAsStateWithLifecycle()
+    val workforceLoading by workforceVm.loading.collectAsStateWithLifecycle()
 
-    val totalEmployees = employees.size.coerceAtLeast(0)
-    val activeTasks    = tasks.count { it.status != "Done" }
-    val completedTasks = tasks.count { it.status == "Done" }
-    val pendingHigh    = tasks.count { it.priority == "High" && it.status != "Done" }
-    val totalSpares    = spareItems.size
+    val totalEmployees  = employees.size.coerceAtLeast(0)
+    val activeTasks     = tasks.count { it.status != "Done" }
+    val completedTasks  = tasks.count { it.status == "Done" }
+    val pendingHigh     = tasks.count { it.priority == "Danger" && it.status != "Done" }
+    val totalSpares     = spareItems.size
+    val pendingLeaves   = leaveRequests.count { it.status == "pending" }
 
     // One-shot scale-in for the floating KPI grid
     var loaded by remember { mutableStateOf(false) }
@@ -256,21 +262,6 @@ fun AdminHomeScreen(
     val activityCounts = remember(activityItems) {
         activityItems.groupingBy { it.category }.eachCount()
     }
-    val needsAttention = remember(tasks, employees, attendance, spareItems, nowMs) {
-        buildNeedsAttention(
-            tasks = tasks, employees = employees, attendance = attendance,
-            spares = spareItems, now = nowMs,
-        )
-    }
-    val yourDay = remember(tasks, employees, attendance, spareItems, nowMs) {
-        buildYourDay(
-            tasks = tasks, employees = employees, attendance = attendance,
-            spares = spareItems, now = nowMs,
-        )
-    }
-    val performanceInsight = remember(tasks, employees, nowMs) {
-        buildPerformanceInsight(tasks = tasks, employees = employees, now = nowMs)
-    }
     val sparklinePoints = remember(tasks, nowMs) { sparkline7Day(tasks, nowMs) }
 
     // Push a status-bar style that matches the gradient header.
@@ -310,6 +301,10 @@ fun AdminHomeScreen(
             onBell     = onOpenNotifications,
         )
 
+        if (workforceLoading) {
+            HomeContentSkeleton(modifier = Modifier.fillMaxSize().weight(1f))
+        } else {
+        AppPullToRefresh(onRefresh = { workforceVm.refresh() }) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             state = listState,
@@ -325,12 +320,6 @@ fun AdminHomeScreen(
                 )
             }
 
-            // 0b. Personalised "Your Day" hero card — derived from today's data.
-            item {
-                Box(modifier = Modifier.padding(horizontal = 20.dp)) {
-                    YourDayCard(stats = yourDay)
-                }
-            }
 
             // 1. KPI grid — sits below header (not floating)
             item {
@@ -401,90 +390,42 @@ fun AdminHomeScreen(
                         badgeFg      = Highlight,
                         alpha        = gridAlpha,
                     )
-                    // Empty placeholder weight to keep the new row aligned with the
-                    // 2-column grid above. Replace later with another KPI when ready.
-                    Box(modifier = Modifier.weight(1f))
+                    KpiCard(
+                        modifier     = Modifier.weight(1f),
+                        icon         = Icons.Filled.BeachAccess,
+                        glow         = if (pendingLeaves > 0) Warning else Success,
+                        value        = pendingLeaves.toString(),
+                        label        = "Leave Pending",
+                        badgeText    = if (pendingLeaves > 0) "Review" else "Clear",
+                        badgeBg      = if (pendingLeaves > 0) WarningBg else SuccessBg,
+                        badgeFg      = if (pendingLeaves > 0) Warning else Success,
+                        alpha        = gridAlpha,
+                        onClick      = onLeaveRequestsClick,
+                    )
                 }
             }
         }
 
-        // 3. Performance chart
+        // 3. Performance chart — real data, week/month/year, bar + line
         item {
-            Column(
-                modifier = Modifier.padding(horizontal = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text       = "Performance · 7 days",
-                            color      = InkPrimary,
-                            fontSize   = 17.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = (-0.2).sp,
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text     = "Tasks assigned vs completed",
-                            color    = InkSecondary,
-                            fontSize = 12.sp,
-                        )
-                    }
-                    Sparkline(
-                        points = sparklinePoints,
-                        tint   = Highlight,
-                        width  = 56.dp,
-                        height = 22.dp,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text       = "This week →",
-                        color      = Highlight,
-                        fontSize   = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-
-                PerformanceChartCard(
-                    completed = chartSeed(completedTasks, jitter = listOf(0, 2, -1, 4, 1, 5, 2)),
-                    assigned  = chartSeed(activeTasks + completedTasks, jitter = listOf(2, 3, 1, 5, 3, 6, 4)),
-                )
-
-                // Insight strip — quick at-a-glance trend summary.
-                Row(
-                    verticalAlignment     = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(Color(0xFFDCFCE7))
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                    ) {
-                        Text(
-                            text       = "▲ +12%",
-                            color      = Success,
-                            fontSize   = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                    Text(
-                        text       = "improvement vs last week",
-                        color      = InkSecondary,
-                        fontSize   = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-            }
+            PerformanceChartSection(
+                tasks     = tasks,
+                employees = employees,
+                nowMs     = nowMs,
+                modifier  = Modifier.padding(horizontal = 20.dp),
+            )
         }
 
         // 4. Recent Activity — real-time pulse of the team.
         item {
             Column(
                 modifier = Modifier.padding(horizontal = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
                     Text(
                         text       = "Recent activity",
                         color      = InkPrimary,
@@ -526,8 +467,15 @@ fun AdminHomeScreen(
                     }
                 }
 
+                // Filter chips
+                FeedFilterChips(
+                    selected = selectedFilter,
+                    onSelect = { selectedFilter = it },
+                    counts   = activityCounts,
+                )
+
                 RecentActivityCard(
-                    items   = activityItems,
+                    items   = filteredActivityItems,
                     nowMs   = nowMs,
                     onClick = { item ->
                         when (item) {
@@ -572,6 +520,7 @@ fun AdminHomeScreen(
                         color      = Highlight,
                         fontSize   = 12.sp,
                         fontWeight = FontWeight.SemiBold,
+                        modifier   = Modifier.clickable(onClick = onViewAllTasks),
                     )
                 }
 
@@ -592,14 +541,87 @@ fun AdminHomeScreen(
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         recentTasks.forEach { task ->
-                            LatestTaskRow(task = task)
+                            LatestTaskRow(task = task, onClick = { onTaskClick(task.id) })
                         }
                     }
                 }
             }
         }
         }   // LazyColumn
+        }   // AppPullToRefresh
+        }   // else (not loading)
     }       // outer Column
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  HOME CONTENT SKELETON  — shown BELOW the header while Firestore loads
+ *  Matches the real home layout: status strip → KPI grid → task rows
+ * ────────────────────────────────────────────────────────────────────────── */
+@Composable
+private fun HomeContentSkeleton(modifier: Modifier = Modifier) {
+    val shimmerAlpha by rememberInfiniteTransition(label = "hskel").animateFloat(
+        initialValue = 0.35f,
+        targetValue  = 0.70f,
+        animationSpec = infiniteRepeatable(
+            animation  = tween(durationMillis = 900, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "hskelAlpha",
+    )
+    val bg = Color(0xFFE2E8F0).copy(alpha = shimmerAlpha)
+
+    @Composable
+    fun Bone(m: Modifier) = Box(m.clip(RoundedCornerShape(14.dp)).background(bg))
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp)
+            .padding(top = 20.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        // ── Status strip (pill row) ────────────────────────────────────────
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            repeat(3) {
+                Bone(Modifier.width(88.dp).height(32.dp).clip(RoundedCornerShape(50.dp)))
+            }
+        }
+
+        // ── KPI card grid (2 rows × 3 tiles) ──────────────────────────────
+        repeat(2) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                repeat(3) { Bone(Modifier.weight(1f).height(82.dp)) }
+            }
+        }
+
+        // ── Section header ─────────────────────────────────────────────────
+        Bone(Modifier.fillMaxWidth(0.38f).height(18.dp))
+
+        // ── Recent task rows ───────────────────────────────────────────────
+        repeat(4) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                Bone(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)))
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Bone(Modifier.fillMaxWidth(0.6f).height(13.dp))
+                    Bone(Modifier.fillMaxWidth(0.4f).height(11.dp))
+                }
+                Bone(Modifier.width(52.dp).height(24.dp).clip(RoundedCornerShape(50.dp)))
+            }
+        }
+    }
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -812,11 +834,13 @@ private fun KpiCard(
     sparkLight: Color = Color(0xFFA5C8FF),
     sparkDark: Color = Highlight,
     alpha: Float = 1f,
+    onClick: (() -> Unit)? = null,
 ) {
     val shape = RoundedCornerShape(22.dp)
     Box(
         modifier = modifier
             .premiumCard(shape)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
         Column(
@@ -1253,11 +1277,11 @@ private fun ActivityDivider() {
  *  Latest tasks list row (premium card)
  * ────────────────────────────────────────────────────────────────────────── */
 @Composable
-private fun LatestTaskRow(task: TaskRecord) {
+private fun LatestTaskRow(task: TaskRecord, onClick: () -> Unit = {}) {
     val shape = RoundedCornerShape(18.dp)
     val (priorityColor, priorityBg) = when (task.priority) {
-        "High"   -> Danger  to Color(0xFFFEE2E2)
-        "Low"    -> Success to Color(0xFFDCFCE7)
+        "Danger"   -> Danger  to Color(0xFFFEE2E2)
+        "Success"    -> Success to Color(0xFFDCFCE7)
         else     -> Warning to Color(0xFFFEF3C7)
     }
     val (statusColor, statusBg, statusLabel) = when (task.status) {
@@ -1269,6 +1293,7 @@ private fun LatestTaskRow(task: TaskRecord) {
         modifier = Modifier
             .fillMaxWidth()
             .premiumCard(shape)
+            .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

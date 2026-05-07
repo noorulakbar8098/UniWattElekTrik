@@ -43,17 +43,33 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.uniwattelektrik.core.theme.AppTheme
+import com.example.uniwattelektrik.core.theme.AppShapes
+// ─── Design tokens — backed by enterprise system ────────────────────────────
+private val ScreenBg     = AppTheme.Bg
+private val CardBg       = AppTheme.Surface
+private val InkPrimary   = AppTheme.Ink900
+private val InkSecondary = AppTheme.Ink500
+private val InkMuted     = AppTheme.Ink300
+private val Brand        = AppTheme.Brand
+private val BrandDeep    = AppTheme.Brand700
+private val Brand50      = AppTheme.Brand50
+private val Success      = AppTheme.Success
+private val SuccessBg    = AppTheme.SuccessBg
+private val Warning      = AppTheme.Warning
+private val WarningBg    = AppTheme.WarningBg
+private val Danger       = AppTheme.Danger
+private val DangerBg     = AppTheme.DangerBg
+private val DividerSoft  = AppTheme.Ink100
+private val ShadowSoft   = AppTheme.ShadowMd
+
 
 /* ── Shared design tokens for dotted-style inputs ─────────────────────── */
-private val InputBg      = Color(0xFFFAFBFD)
-private val CardBg       = Color(0xFFFFFFFF)
-private val InkPrimary   = Color(0xFF0F172A)
-private val InkSecondary = Color(0xFF64748B)
-private val InkMuted     = Color(0xFF94A3B8)
-private val Divider      = Color(0xFFE2E8F0)
-private val DotBorder    = Color(0xFFCBD5E1)
-private val ErrorRed     = Color(0xFFEF4444)
-private val FocusBlue    = Color(0xFF2979FF)
+private val InputBg   = AppTheme.SurfaceMuted
+private val DotBorder = AppTheme.Ink100
+private val ErrorRed  = AppTheme.Danger
+private val FocusBlue = AppTheme.Brand
+private val Divider   = AppTheme.Ink100
 
 /**
  * Thin rounded dashed border — matches the Task-creation field style.

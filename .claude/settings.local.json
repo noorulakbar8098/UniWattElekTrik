@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /tmp/fastexcel_src)",
+      "Read(//tmp/**)",
+      "Bash(jar xf *)",
+      "Bash(grep -rn \"getItemAt\" .)",
+      "Bash(./gradlew :composeApp:compileDebugKotlin)",
+      "Bash(./gradlew :composeApp:compileDebugKotlin --daemon -q)",
+      "Bash(./gradlew :composeApp:compileDebugKotlin --daemon)",
+      "Bash(grep -n \"^        }$\\\\|^        }  \" /Users/noorul/AndroidStudioProjects/UniWattElekTrik/composeApp/src/commonMain/kotlin/com/example/uniwattelektrik/feature/admin/presentation/screens/AdminEmployeesScreen.kt)"
+    ]
+  }
+}

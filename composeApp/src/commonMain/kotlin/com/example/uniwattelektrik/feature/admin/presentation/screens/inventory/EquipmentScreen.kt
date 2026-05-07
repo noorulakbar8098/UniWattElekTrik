@@ -1,5 +1,7 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens.inventory
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -76,6 +78,7 @@ fun EquipmentScreen(
     adminId: String,
     modifier: Modifier = Modifier,
 ) {
+    TrackScreenPerformance("EquipmentScreen")
     SetStatusBar(color = PremiumHeaderStatusBarColor, darkIcons = false)
 
     val departments by inventoryVm.departments.collectAsState()
@@ -141,7 +144,7 @@ fun EquipmentScreen(
                     inventoryVm.deleteEquipment(adminId, eq.id)
                     deleteTarget = null
                 }) {
-                    Text("Delete", color = AppTheme.High, fontWeight = FontWeight.SemiBold)
+                    Text("Delete", color = AppTheme.Danger, fontWeight = FontWeight.SemiBold)
                 }
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } },
@@ -227,7 +230,7 @@ private fun FilterChip(
         modifier = Modifier
             .clip(shape)
             .background(if (selected) AppTheme.Brand else Color.White)
-            .then(if (!selected) Modifier.shadow(2.dp, shape, spotColor = AppTheme.ShadowSpotSoft) else Modifier)
+            .then(if (!selected) Modifier.shadow(2.dp, shape, spotColor = AppTheme.ShadowSm) else Modifier)
             .premiumPress(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
@@ -252,7 +255,7 @@ private fun EquipmentCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(6.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowSpotSoft)
+            .shadow(6.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowSm)
             .clip(shape)
             .background(Color.White)
             .premiumPress(onClick = {})
@@ -269,7 +272,7 @@ private fun EquipmentCard(
                 Icon(
                     imageVector = Icons.Outlined.Inventory2,
                     contentDescription = null,
-                    tint = AppTheme.Violet,
+                    tint = AppTheme.Brand,
                     modifier = Modifier.size(24.dp)
                 )
             }
@@ -290,7 +293,7 @@ private fun EquipmentCard(
             
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 IconAction(icon = Icons.Outlined.Edit, tint = AppTheme.Brand, onClick = onEdit)
-                IconAction(icon = Icons.Outlined.Delete, tint = AppTheme.High, onClick = onDelete)
+                IconAction(icon = Icons.Outlined.Delete, tint = AppTheme.Danger, onClick = onDelete)
             }
         }
     }
@@ -328,7 +331,7 @@ private fun EquipmentFormDialog(
                         placeholder   = { Text("e.g. Circuit Breaker", color = AppTheme.Ink300, fontSize = 15.sp) },
                         singleLine    = true,
                         isError       = nameError.isNotEmpty(),
-                        supportingText = if (nameError.isNotEmpty()) {{ Text(nameError, color = AppTheme.High, fontSize = 12.sp) }} else null,
+                        supportingText = if (nameError.isNotEmpty()) {{ Text(nameError, color = AppTheme.Danger, fontSize = 12.sp) }} else null,
                         keyboardOptions = KeyboardOptions(
                             capitalization = KeyboardCapitalization.Words,
                             imeAction = ImeAction.Done,

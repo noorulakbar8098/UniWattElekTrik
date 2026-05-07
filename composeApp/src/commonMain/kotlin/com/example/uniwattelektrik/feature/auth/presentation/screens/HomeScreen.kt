@@ -1,5 +1,7 @@
 package com.example.uniwattelektrik.feature.auth.presentation.screens
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
@@ -19,7 +21,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,6 +63,36 @@ import com.example.uniwattelektrik.platform.LocationData
 import com.example.uniwattelektrik.platform.LocationProvider
 import com.example.uniwattelektrik.platform.currentTimeFormatted
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import com.example.uniwattelektrik.core.theme.AppTheme
+import com.example.uniwattelektrik.core.theme.AppShapes
+// ─── Design tokens — backed by enterprise system ────────────────────────────
+private val ScreenBg     = AppTheme.Bg
+private val CardBg       = AppTheme.Surface
+private val InkPrimary   = AppTheme.Ink900
+private val InkSecondary = AppTheme.Ink500
+private val InkMuted     = AppTheme.Ink300
+private val Brand        = AppTheme.Brand
+private val BrandDeep    = AppTheme.Brand700
+private val Brand50      = AppTheme.Brand50
+private val Success      = AppTheme.Success
+private val SuccessBg    = AppTheme.SuccessBg
+private val Warning      = AppTheme.Warning
+private val WarningBg    = AppTheme.WarningBg
+private val Danger       = AppTheme.Danger
+private val DangerBg     = AppTheme.DangerBg
+private val DividerSoft  = AppTheme.Ink100
+private val ShadowSoft   = AppTheme.ShadowMd
+private val TextDark    = AppTheme.Ink900
+private val TextGray    = AppTheme.Ink500
+private val TextMuted   = AppTheme.Ink300
+private val CardWhite   = AppTheme.Surface
+private val BlueAccent  = AppTheme.Brand
+private val DeepBlue    = AppTheme.Navy
+private val GreenStatus = AppTheme.Success
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  DATA MODELS  (drives every dynamic value rendered on this screen)
@@ -111,22 +146,15 @@ data class Task(
 
 enum class TaskPriority(val color: Color) {
     Critical(Color(0xFFEF4444)),
-    High(Color(0xFFF59E0B)),
+    Danger(Color(0xFFF59E0B)),
     Normal(Color(0xFF1E73E8)),
-    Low(Color(0xFF22C55E)),
+    Success(Color(0xFF22C55E)),
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  PALETTE
 // ─────────────────────────────────────────────────────────────────────────────
 
-private val TextDark    = Color(0xFF0A1F44)
-private val TextGray    = Color(0xFF6B7A99)
-private val TextMuted   = Color(0xFF9AA3B5)
-private val CardWhite   = Color(0xFFFFFFFF)
-private val BlueAccent  = Color(0xFF1E73E8)
-private val DeepBlue    = Color(0xFF0A3D91)
-private val GreenStatus = Color(0xFF22C55E)
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  ENTRY POINT  (wires AuthViewModel → dynamic state)
@@ -139,7 +167,11 @@ fun HomeScreen(
     workforceVm: WorkforceViewModel? = null,
     onOpenNotifications: () -> Unit = {},
     onOpenTasks: () -> Unit = {},
+    onNewLeave: () -> Unit = {},
+    onViewMap: () -> Unit = {},
+    onTaskDetail: (String) -> Unit = {},
 ) {
+    TrackScreenPerformance("HomeScreen")
     // Initial state derived from the signed-in user. In production this would come
     // from a HomeViewModel + repository; for now we seed with realistic data and
     // let the UI mutate it locally as location/time updates arrive.
@@ -151,6 +183,14 @@ fun HomeScreen(
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<
                 TaskRecord>()) }
             .collectAsStateWithLifecycle())
+
+    // Apply live Firestore tasks filtered to this user whenever the list changes.
+    LaunchedEffect(liveTasks, user.id) {
+        val userTasks = liveTasks.filter { it.userId == user.id }
+        if (userTasks.isNotEmpty()) {
+            state = state.applyLiveTasks(userTasks)
+        }
+    }
 
     val locationProvider = remember { LocationProvider() }
     val scope            = rememberCoroutineScope()
@@ -198,12 +238,27 @@ fun HomeScreen(
         employees.firstOrNull { it.id == user.id }?.shift ?: "Shift1"
     }
 
-    // Live shift label with countdown — updates every minute while the screen is alive.
+    // Real role from employee record
+    val myRole: String = remember(employees, user.id) {
+        employees.firstOrNull { it.id == user.id }?.role?.takeIf { it.isNotBlank() }
+            ?: "Field Engineer"
+    }
+
+    // Real unread notification count
+    val notifications by (workforceVm?.notifications?.collectAsStateWithLifecycle()
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<
+                com.example.uniwattelektrik.feature.workforce.data.remote.NotificationRecord>()) }
+            .collectAsStateWithLifecycle())
+    val unreadCount = notifications.count { !it.isRead && it.userId == user.id }
+
+    // Live clock — ticks every second so the time display runs like a timer.
     var nowMs by remember { mutableStateOf(com.example.uniwattelektrik.platform.nowEpochMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
             nowMs = com.example.uniwattelektrik.platform.nowEpochMillis()
-            kotlinx.coroutines.delay(60_000L)
+            // Update the clock time in the check-in card on every tick.
+            state = state.copy(checkIn = state.checkIn.copy(time = currentTimeFormatted()))
+            kotlinx.coroutines.delay(1_000L)
         }
     }
     LaunchedEffect(myShift, nowMs) {
@@ -238,8 +293,15 @@ fun HomeScreen(
     // Render-time override: the toggle always reflects server truth (or the
     // brief optimistic override). Local state still drives time/location/shift
     // so the rest of the card stays smooth across re-entries.
+    val greeting = buildGreeting(nowMs)
+    val todayLabel = buildTodayLabel(nowMs)
     val renderState = state.copy(
         checkIn = state.checkIn.copy(isCheckedIn = isCheckedIn),
+        profile = state.profile.copy(
+            greeting = "$greeting,",
+            role     = "$myRole  ·  $todayLabel",
+        ),
+        notificationCount = unreadCount,
     )
 
     HomeScaffold(
@@ -344,10 +406,12 @@ fun HomeScreen(
                 }
             }
         },
-        onAvatarClick    = { viewModel.onEvent(AuthUiEvent.Logout) }, // dev shortcut → profile tab logout normally
+        onAvatarClick    = { viewModel.onEvent(AuthUiEvent.Logout) },
         onBellClick      = onOpenNotifications,
-        onTaskClick      = { onOpenTasks() },
+        onTaskClick      = { task -> onTaskDetail(task.id) },
         onViewAllTasks   = onOpenTasks,
+        onNewLeave       = onNewLeave,
+        onViewMap        = onViewMap,
     )
 }
 
@@ -363,15 +427,22 @@ private fun HomeScaffold(
     onBellClick: () -> Unit,
     onTaskClick: (Task) -> Unit,
     onViewAllTasks: () -> Unit,
+    onNewLeave: () -> Unit = {},
+    onViewMap: () -> Unit = {},
 ) {
+    // Compute kanban counts from stats
+    val inProgressCount = state.stats.firstOrNull { it.label == "ACTIVE" }?.value?.toIntOrNull() ?: 0
+    val doneCount       = state.stats.firstOrNull { it.label == "DONE TODAY" }?.value?.toIntOrNull() ?: 0
     PremiumGradientBackground {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.statusBars),
             contentPadding = PaddingValues(
                 start  = 20.dp,
                 end    = 20.dp,
                 top    = 16.dp,
-                bottom = 100.dp,    // leaves room for the shell's bottom nav
+                bottom = 100.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
@@ -381,6 +452,7 @@ private fun HomeScaffold(
                     notificationCount = state.notificationCount,
                     onAvatarClick     = onAvatarClick,
                     onBellClick       = onBellClick,
+                    isCheckedIn       = state.checkIn.isCheckedIn,
                 )
             }
             item {
@@ -389,7 +461,20 @@ private fun HomeScaffold(
                     onToggle = onCheckInToggle,
                 )
             }
-            item { StatsRow(stats = state.stats) }
+            item {
+                KanbanStripSection(
+                    todoCount       = inProgressCount,
+                    inProgressCount = state.totalTaskCount - inProgressCount - doneCount,
+                    doneCount       = doneCount,
+                    onTap           = onViewAllTasks,
+                )
+            }
+            item {
+                QuickActionsRow(
+                    onNewLeave = onNewLeave,
+                    onViewMap  = onViewMap,
+                )
+            }
             item {
                 TaskSection(
                     tasks       = state.tasks,
@@ -413,89 +498,103 @@ fun HeaderSection(
     onAvatarClick: () -> Unit,
     onBellClick: () -> Unit,
     modifier: Modifier = Modifier,
+    isCheckedIn: Boolean = false,
 ) {
-    Row(
-        modifier              = modifier.fillMaxWidth(),
-        verticalAlignment     = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        // Avatar — gradient rounded square
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .shadow(
-                    elevation = 10.dp,
-                    shape     = RoundedCornerShape(16.dp),
-                    spotColor = Color(0x40EC8552),
-                )
-                .clip(RoundedCornerShape(16.dp))
-                .background(Brush.linearGradient(profile.avatarGradient))
-                .clickable(onClick = onAvatarClick),
-            contentAlignment = Alignment.Center,
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier              = Modifier.fillMaxWidth(),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text(
-                profile.initials,
-                color         = Color.White,
-                fontSize      = 18.sp,
-                fontWeight    = FontWeight.Bold,
-                letterSpacing = 0.5.sp,
-            )
+            // Avatar — gradient rounded square
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .shadow(elevation = 10.dp, shape = RoundedCornerShape(16.dp), spotColor = Color(0x40EC8552))
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Brush.linearGradient(profile.avatarGradient))
+                    .clickable(onClick = onAvatarClick),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    profile.initials,
+                    color = Color.White, fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp,
+                )
+            }
+
+            // Greeting + name + role
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Text(profile.greeting, color = TextGray, fontSize = 13.sp)
+                Text(
+                    profile.name,
+                    color = TextDark, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                // Role line — pulls from employee record
+                Text(
+                    "// ${profile.role}",
+                    color = TextMuted, fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace, letterSpacing = 0.4.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            // Notification bell — rounded square + count badge
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .shadow(elevation = 6.dp, shape = RoundedCornerShape(14.dp), spotColor = Color(0x140A1F44))
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.White)
+                    .clickable(onClick = onBellClick),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = "🔔", fontSize = 22.sp)
+                if (notificationCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = (-6).dp, y = 6.dp)
+                            .size(if (notificationCount > 9) 18.dp else 16.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFEF4444)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            if (notificationCount > 9) "9+" else notificationCount.toString(),
+                            color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
         }
 
-        // Greeting + name + role
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                profile.greeting,
-                color    = TextGray,
-                fontSize = 13.sp,
-            )
-            Text(
-                profile.name,
-                color      = TextDark,
-                fontSize   = 20.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines   = 1,
-                overflow   = TextOverflow.Ellipsis,
-            )
-            Text(
-                "// ${profile.role}",
-                color         = TextMuted,
-                fontSize      = 11.sp,
-                fontFamily    = FontFamily.Monospace,
-                letterSpacing = 0.4.sp,
-                maxLines      = 2,
-                overflow      = TextOverflow.Ellipsis,
-            )
-        }
-
-        // Notification bell — rounded square + red dot
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .shadow(
-                    elevation = 6.dp,
-                    shape     = RoundedCornerShape(14.dp),
-                    spotColor = Color(0x140A1F44),
-                )
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color.White)
-                .clickable(onClick = onBellClick),
-            contentAlignment = Alignment.Center,
+        // ── Status + date chip row ─────────────────────────────────────────
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Emoji-style golden bell — renders colorful by default, no tint
-            Text(
-                text     = "🔔",   // 🔔
-                fontSize = 22.sp,
-            )
-            if (notificationCount > 0) {
-                Box(
-                    modifier = Modifier
-                        .size(9.dp)
-                        .align(Alignment.TopEnd)
-                        .offset(x = (-10).dp, y = 10.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFFEF4444))
-                )
+            // On Duty / Off Duty pill
+            val dutyBg    = if (isCheckedIn) Color(0xFFDCFCE7) else Color(0xFFF3F4F6)
+            val dutyColor = if (isCheckedIn) Color(0xFF16A34A) else Color(0xFF6B7280)
+            val dutyEmoji = if (isCheckedIn) "🟢" else "⚪"
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(dutyBg)
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(dutyEmoji, fontSize = 10.sp)
+                    Text(
+                        if (isCheckedIn) "On Duty" else "Off Duty",
+                        color = dutyColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         }
     }
@@ -632,13 +731,13 @@ private fun CheckInToggle(
         )
         Row(Modifier.fillMaxSize()) {
             CheckInTab(
-                label    = "Checked In",
+                label    = "On Duty",
                 selected = isCheckedIn,
                 modifier = Modifier.weight(1f),
                 onClick  = { onToggle(true) },
             )
             CheckInTab(
-                label    = "Check Out",
+                label    = "Off Duty",
                 selected = !isCheckedIn,
                 modifier = Modifier.weight(1f),
                 onClick  = { onToggle(false) },
@@ -833,8 +932,126 @@ fun TaskItem(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  DEFAULT STATE  (derives initials/name from the signed-in [User])
+//  KANBAN STRIP
 // ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun KanbanStripSection(
+    todoCount: Int,
+    inProgressCount: Int,
+    doneCount: Int,
+    onTap: () -> Unit,
+) {
+    val cardShape = RoundedCornerShape(20.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(8.dp, cardShape, spotColor = Color(0x140A1F44))
+            .clip(cardShape)
+            .background(CardWhite)
+            .clickable(onClick = onTap)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+    ) {
+        KanbanPill(count = todoCount,       label = "To Do",       color = InkMuted,  bg = Color(0xFFF3F4F6), modifier = Modifier.weight(1f))
+        KanbanDivider()
+        KanbanPill(count = inProgressCount, label = "In Progress", color = Brand,     bg = Brand50,           modifier = Modifier.weight(1f))
+        KanbanDivider()
+        KanbanPill(count = doneCount,       label = "Done",        color = Success,   bg = SuccessBg,         modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun KanbanPill(count: Int, label: String, color: Color, bg: Color, modifier: Modifier = Modifier) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier            = modifier,
+    ) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(bg)
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                count.toString(),
+                color      = color,
+                fontSize   = 20.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        Text(label, color = InkSecondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun KanbanDivider() {
+    Box(
+        modifier = Modifier
+            .width(1.dp)
+            .height(40.dp)
+            .background(DividerSoft),
+    )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  QUICK ACTIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun QuickActionsRow(
+    onNewLeave: () -> Unit,
+    onViewMap: () -> Unit,
+) {
+    Row(
+        modifier              = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        QuickActionButton(
+            emoji      = "🏖",
+            label      = "New Leave",
+            bg         = WarningBg,
+            labelColor = Warning,
+            modifier   = Modifier.weight(1f),
+            onClick    = onNewLeave,
+        )
+        QuickActionButton(
+            emoji      = "🗺",
+            label      = "View Map",
+            bg         = Brand50,
+            labelColor = Brand,
+            modifier   = Modifier.weight(1f),
+            onClick    = onViewMap,
+        )
+    }
+}
+
+@Composable
+private fun QuickActionButton(
+    emoji: String,
+    label: String,
+    bg: Color,
+    labelColor: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val cardShape = RoundedCornerShape(16.dp)
+    Column(
+        modifier = modifier
+            .shadow(6.dp, cardShape, spotColor = Color(0x140A1F44))
+            .clip(cardShape)
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(emoji, fontSize = 26.sp)
+        Text(label, color = labelColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  DEFAULT STATE  (derives initials/name from the signed-in [User])
@@ -843,23 +1060,28 @@ fun TaskItem(
 /** Replace seeded tasks/stats with live Firestore tasks scoped by userId. */
 private fun HomeUiState.applyLiveTasks(live: List<TaskRecord>): HomeUiState {
     if (live.isEmpty()) return this
-    val mapped = live.take(3).map { rec ->
+    // Show up to 3 tasks for "Today's Tasks" — prefer active/in-progress first
+    val sorted = live.sortedWith(
+        compareBy({ it.status == "Done" }, { it.priority != "Danger" })
+    )
+    val mapped = sorted.take(3).map { rec ->
         Task(
             id       = rec.id,
             title    = rec.title,
-            location = rec.location,
-            time     = rec.time,
-            day      = rec.day,
+            location = rec.location.ifBlank { "—" },
+            time     = rec.time.ifBlank { "—" },
+            day      = rec.day.ifBlank { "Today" },
             priority = when (rec.priority) {
-                "High"   -> TaskPriority.Critical
-                "Medium" -> TaskPriority.High
-                else      -> TaskPriority.Normal
+                "Danger"   -> TaskPriority.Critical
+                "Medium"   -> TaskPriority.Danger
+                "Success"  -> TaskPriority.Success
+                else       -> TaskPriority.Normal
             },
         )
     }
     val active   = live.count { it.status != "Done" }
     val done     = live.count { it.status == "Done" }
-    val critical = live.count { it.priority == "High" && it.status != "Done" }
+    val critical = live.count { it.priority == "Danger" && it.status != "Done" }
     return copy(
         tasks          = mapped,
         totalTaskCount = live.size,
@@ -915,7 +1137,7 @@ private fun defaultHomeState(user: User): HomeUiState {
                 location = "Whitefield · 5.1 km",
                 time     = "13:00",
                 day      = "Today",
-                priority = TaskPriority.High,
+                priority = TaskPriority.Danger,
             ),
             Task(
                 id       = "T-003",
@@ -929,6 +1151,36 @@ private fun defaultHomeState(user: User): HomeUiState {
         totalTaskCount    = 11,
         notificationCount = 3,
     )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  GREETING + DATE HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Returns "Good morning" / "Good afternoon" / "Good evening" from current time. */
+private fun buildGreeting(nowMs: Long): String {
+    val mins = com.example.uniwattelektrik.platform.minutesOfDay(nowMs)
+    return when {
+        mins < 12 * 60  -> "Good morning"
+        mins < 17 * 60  -> "Good afternoon"
+        else            -> "Good evening"
+    }
+}
+
+/** Returns e.g. "Wed, 7 May" from the current epoch ms. */
+private fun buildTodayLabel(nowMs: Long): String {
+    val ldt = Instant.fromEpochMilliseconds(nowMs)
+        .toLocalDateTime(TimeZone.currentSystemDefault())
+    val dayName = when (ldt.dayOfWeek.ordinal) {
+        0 -> "Mon"; 1 -> "Tue"; 2 -> "Wed"; 3 -> "Thu"
+        4 -> "Fri"; 5 -> "Sat"; else -> "Sun"
+    }
+    val monthName = when (ldt.monthNumber) {
+        1 -> "Jan"; 2 -> "Feb"; 3 -> "Mar"; 4 -> "Apr"
+        5 -> "May"; 6 -> "Jun"; 7 -> "Jul"; 8 -> "Aug"
+        9 -> "Sep"; 10 -> "Oct"; 11 -> "Nov"; else -> "Dec"
+    }
+    return "$dayName, ${ldt.dayOfMonth} $monthName"
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

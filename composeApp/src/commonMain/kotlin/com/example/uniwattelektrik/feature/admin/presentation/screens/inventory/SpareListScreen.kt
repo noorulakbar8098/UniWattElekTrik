@@ -1,5 +1,7 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens.inventory
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -7,25 +9,24 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -65,6 +67,7 @@ fun SpareListScreen(
     onItemClick: (SpareItem) -> Unit = onEdit,
     modifier: Modifier = Modifier,
 ) {
+    TrackScreenPerformance("SpareListScreen")
     SetStatusBar(color = PremiumHeaderStatusBarColor, darkIcons = false)
 
     LaunchedEffect(adminId) {
@@ -73,9 +76,7 @@ fun SpareListScreen(
 
     val items by inventoryVm.spareItems.collectAsState()
 
-    // Build the category dropdown dynamically from imported data so users see
-    // their REAL categories ("Wire Flexible CU", "Cable Flexible CU", …)
-    // rather than the legacy hard-coded pair.
+    // Build category list dynamically
     val categories = remember(items) {
         buildList {
             add("All")
@@ -86,11 +87,17 @@ fun SpareListScreen(
         }
     }
     var selectedCategory by remember { mutableStateOf("All") }
-    var showCategoryMenu by remember { mutableStateOf(false) }
+    var search by remember { mutableStateOf("") }
 
     val displayed = items.filter { item ->
-        selectedCategory == "All" ||
+        val catOk = selectedCategory == "All" ||
             (item.category.ifBlank { "Uncategorized" } == selectedCategory)
+        val q = search.trim()
+        val textOk = q.isBlank() ||
+            item.name.contains(q, ignoreCase = true) ||
+            item.category.contains(q, ignoreCase = true) ||
+            item.make.contains(q, ignoreCase = true)
+        catOk && textOk
     }
 
     // ── Multi-selection state ───────────────────────────────────────────────
@@ -135,7 +142,7 @@ fun SpareListScreen(
                     cancelSelection()
                     inventoryVm.bulkDeleteSpareItems(adminId, ids)
                 }) {
-                    Text("Delete", color = AppTheme.High, fontWeight = FontWeight.SemiBold)
+                    Text("Delete", color = AppTheme.Danger, fontWeight = FontWeight.SemiBold)
                 }
             },
             dismissButton = {
@@ -154,36 +161,81 @@ fun SpareListScreen(
                 onBack = onBack,
             )
 
-            // ── Filters ───────────────────────────────────────────────────────────
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
+            // ── Search bar ────────────────────────────────────────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .shadow(2.dp, RoundedCornerShape(14.dp), spotColor = AppTheme.ShadowSm, ambientColor = Color.Transparent)
+                    .background(Color.White)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                item {
-                    FilterChip(
-                        label    = if (selectedCategory == "All") "All Categories" else selectedCategory,
-                        selected = selectedCategory != "All",
-                        onExpand = { showCategoryMenu = true },
-                    ) {
-                        DropdownMenu(
-                            expanded = showCategoryMenu,
-                            onDismissRequest = { showCategoryMenu = false },
-                            modifier = Modifier.background(Color.White).shadow(8.dp, RoundedCornerShape(12.dp))
-                        ) {
-                            categories.forEach { cat ->
-                                DropdownMenuItem(
-                                    text = { Text(cat, color = if (selectedCategory == cat) AppTheme.Brand else AppTheme.Ink900, fontSize = 13.sp) },
-                                    onClick = {
-                                        selectedCategory = cat
-                                        showCategoryMenu = false
-                                    },
-                                )
-                            }
+                Icon(
+                    imageVector = Icons.Outlined.Search,
+                    contentDescription = null,
+                    tint = AppTheme.Ink300,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                BasicTextField(
+                    value = search,
+                    onValueChange = { search = it },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    textStyle = TextStyle(
+                        color = AppTheme.Ink900,
+                        fontSize = 13.sp,
+                    ),
+                    decorationBox = { inner ->
+                        if (search.isEmpty()) {
+                            Text("Search spares…", color = AppTheme.Ink300, fontSize = 13.sp)
                         }
+                        inner()
+                    },
+                )
+                if (search.isNotEmpty()) {
+                    Icon(
+                        imageVector = Icons.Outlined.Close,
+                        contentDescription = null,
+                        tint = AppTheme.Ink300,
+                        modifier = Modifier.size(16.dp).clickable { search = "" },
+                    )
+                }
+            }
+
+            // ── Category pills ────────────────────────────────────────────────
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(categories) { cat ->
+                    val selected = cat == selectedCategory
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .then(
+                                if (!selected)
+                                    Modifier.shadow(2.dp, RoundedCornerShape(999.dp), spotColor = AppTheme.ShadowSm)
+                                else
+                                    Modifier
+                            )
+                            .background(if (selected) AppTheme.Brand else Color.White)
+                            .clickable { selectedCategory = cat }
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            cat,
+                            color = if (selected) Color.White else AppTheme.Ink700,
+                            fontSize = 13.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                        )
                     }
                 }
             }
+
+            Spacer(Modifier.height(8.dp))
 
             // ── List ──────────────────────────────────────────────────────────────
             AppPullToRefresh(
@@ -243,42 +295,5 @@ fun SpareListScreen(
                 )
             }
         }
-    }
-}
-
-
-@Composable
-private fun FilterChip(
-    label: String,
-    selected: Boolean,
-    onExpand: () -> Unit,
-    content: @Composable () -> Unit,
-) {
-    val shape = RoundedCornerShape(12.dp)
-    Box {
-        Row(
-            modifier = Modifier
-                .clip(shape)
-                .background(if (selected) AppTheme.Brand else Color.White)
-                .then(if (!selected) Modifier.shadow(2.dp, shape, spotColor = AppTheme.ShadowSpotSoft) else Modifier)
-                .clickable(onClick = onExpand)
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text(
-                text = label,
-                color = if (selected) Color.White else AppTheme.Ink700,
-                fontSize = 13.sp,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-            )
-            Icon(
-                imageVector = Icons.Outlined.ExpandMore,
-                contentDescription = null,
-                tint = if (selected) Color.White else AppTheme.Ink300,
-                modifier = Modifier.size(16.dp)
-            )
-        }
-        content()
     }
 }

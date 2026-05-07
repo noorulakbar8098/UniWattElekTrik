@@ -1,9 +1,8 @@
 package com.example.uniwattelektrik.feature.user.presentation.screens
 
-import com.example.uniwattelektrik.core.theme.appScreenBackground
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,13 +19,11 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,227 +31,270 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.uniwattelektrik.core.components.AppCard
-import com.example.uniwattelektrik.core.components.EmptyState
+import com.example.uniwattelektrik.core.components.DsEmptyState
+import com.example.uniwattelektrik.core.components.DsFilterChip
+import com.example.uniwattelektrik.core.components.DsGlassSearchBar
+import com.example.uniwattelektrik.core.components.DsTaskCard
+import com.example.uniwattelektrik.core.components.PremiumHeaderBackground
+import com.example.uniwattelektrik.core.components.PremiumHeaderStatusBarColor
 import com.example.uniwattelektrik.core.sample.SampleTask
 import com.example.uniwattelektrik.core.sample.TaskPriority
+import com.example.uniwattelektrik.core.sample.TaskStatus
+import com.example.uniwattelektrik.core.theme.AppShapes
 import com.example.uniwattelektrik.core.theme.AppTheme
 import com.example.uniwattelektrik.core.theme.AppTypography
 import com.example.uniwattelektrik.core.theme.SetStatusBar
+import com.example.uniwattelektrik.core.theme.appScreenBackground
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
+import kotlin.math.absoluteValue
+
+/* ── Presentation helpers — pure functions, no side-effects ───────────── */
+
+private fun TaskPriority.accentColor() = when (this) {
+    TaskPriority.Danger  -> AppTheme.Danger
+    TaskPriority.Warning -> AppTheme.Warning
+    TaskPriority.Success -> AppTheme.Success
+}
+
+private fun progressFor(task: SampleTask): Float = when (task.status) {
+    TaskStatus.Done       -> 1.0f
+    TaskStatus.InProgress -> ((task.id.hashCode().absoluteValue % 70) + 30) / 100f
+    else                  -> 0f
+}
+
+private fun taskCode(task: SampleTask): String {
+    val n = (task.id.hashCode().absoluteValue % 9000) + 1000
+    return "#TASK-$n"
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  TaskListScreen
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
 @Composable
 fun TaskListScreen(
-    onTaskClick: (taskId: String) -> Unit,
-    modifier: Modifier = Modifier,
-    workforceVm: WorkforceViewModel? = null,
+    onTaskClick : (taskId: String) -> Unit,
+    modifier    : Modifier = Modifier,
+    workforceVm : WorkforceViewModel? = null,
 ) {
-    var query           by remember { mutableStateOf("") }
-    var priorityFilter  by remember { mutableStateOf<TaskPriority?>(null) }
+    TrackScreenPerformance("TaskListScreen")
+    var query          by remember { mutableStateOf("") }
+    var priorityFilter by remember { mutableStateOf<TaskPriority?>(null) }
 
-    // Live Firestore tasks assigned to this user (from observeTasksForUser).
     val liveTasks by (workforceVm?.tasks?.collectAsStateWithLifecycle()
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<TaskRecord>()) }
             .collectAsStateWithLifecycle())
 
-    val tasks = liveTasks
-        .map { it.toSampleTask() }
-        .filter { task ->
-            (priorityFilter == null || task.priority == priorityFilter) &&
-            (query.isBlank() || task.title.contains(query, ignoreCase = true)
-                              || task.location.contains(query, ignoreCase = true))
-        }
+    val allTasks = liveTasks.map { it.toSampleTask() }
 
-    Column(modifier = modifier.fillMaxSize().background(appScreenBackground())) {
+    val filtered = allTasks.filter { task ->
+        (priorityFilter == null || task.priority == priorityFilter) &&
+        (query.isBlank()
+            || task.title.contains(query, ignoreCase = true)
+            || task.location.contains(query, ignoreCase = true))
+    }
 
-        // Status bar matches the screen bg (light) so dark icons read crisply.
-        SetStatusBar(color = AppTheme.Bg, darkIcons = true)
+    val activeCount = remember(allTasks) { allTasks.count { it.status != TaskStatus.Done } }
+    val doneCount   = remember(allTasks) { allTasks.count { it.status == TaskStatus.Done } }
 
-        val listState = rememberLazyListState()
-        val scrolled by remember {
-            derivedStateOf {
-                listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+    SetStatusBar(color = PremiumHeaderStatusBarColor, darkIcons = false)
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(appScreenBackground()),
+    ) {
+        // ── Gradient header (fixed, does not scroll) ─────────────────────
+        TaskListHeader(
+            activeCount   = activeCount,
+            doneCount     = doneCount,
+            query         = query,
+            onQueryChange = { query = it },
+        )
+
+        // ── Priority filter chips ─────────────────────────────────────────
+        LazyRow(
+            contentPadding        = PaddingValues(horizontal = AppTheme.SpLg),
+            horizontalArrangement = Arrangement.spacedBy(AppTheme.SpSm),
+            modifier              = Modifier
+                .fillMaxWidth()
+                .padding(top = AppTheme.SpMd, bottom = AppTheme.SpSm),
+        ) {
+            item {
+                DsFilterChip(
+                    label    = "All",
+                    selected = priorityFilter == null,
+                    tint     = AppTheme.Brand,
+                    onClick  = { priorityFilter = null },
+                )
+            }
+            item {
+                DsFilterChip(
+                    label    = "High",
+                    selected = priorityFilter == TaskPriority.Danger,
+                    tint     = AppTheme.Danger,
+                    onClick  = { priorityFilter = TaskPriority.Danger },
+                )
+            }
+            item {
+                DsFilterChip(
+                    label    = "Medium",
+                    selected = priorityFilter == TaskPriority.Warning,
+                    tint     = AppTheme.Warning,
+                    onClick  = { priorityFilter = TaskPriority.Warning },
+                )
+            }
+            item {
+                DsFilterChip(
+                    label    = "Low",
+                    selected = priorityFilter == TaskPriority.Success,
+                    tint     = AppTheme.Success,
+                    onClick  = { priorityFilter = TaskPriority.Success },
+                )
             }
         }
 
-        // ── Sticky header (title + search + chips) ─────────────────────────
+        // ── Task list / empty state ───────────────────────────────────────
+        if (filtered.isEmpty()) {
+            DsEmptyState(
+                emoji = "📋",
+                title = "No tasks match",
+                body  = "Try a different filter or check back later.",
+            )
+        } else {
+            LazyColumn(
+                modifier            = Modifier.fillMaxSize(),
+                contentPadding      = PaddingValues(
+                    start  = AppTheme.SpLg,
+                    end    = AppTheme.SpLg,
+                    top    = AppTheme.SpSm,
+                    bottom = 100.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(AppTheme.SpMd),
+            ) {
+                items(filtered, key = { it.id }) { task ->
+                    DsTaskCard(
+                        taskCode         = taskCode(task),
+                        title            = task.title,
+                        locationText     = "${task.location} · ${task.distanceKm} km",
+                        dueText          = "${task.day}  ${task.time}",
+                        accentColor      = task.priority.accentColor(),
+                        priorityLabel    = task.priority.label,
+                        statusLabel      = task.status.label,
+                        statusColor      = task.status.color,
+                        statusBg         = task.status.bg,
+                        assigneeInitials = task.assigneeInitials,
+                        showProgress     = task.status == TaskStatus.InProgress,
+                        progressFraction = progressFor(task),
+                        isCompleted      = task.status == TaskStatus.Done,
+                        onClick          = { onTaskClick(task.id) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/* ── Header ───────────────────────────────────────────────────────────── */
+
+@Composable
+private fun TaskListHeader(
+    activeCount  : Int,
+    doneCount    : Int,
+    query        : String,
+    onQueryChange: (String) -> Unit,
+) {
+    PremiumHeaderBackground(roundedBottom = true, cornerRadius = 30.dp) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .shadow(elevation = if (scrolled) 6.dp else 0.dp, spotColor = AppTheme.ShadowSpotSoft)
-                .background(AppTheme.Bg)
                 .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 20.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = AppTheme.SpLg, vertical = AppTheme.SpXl),
         ) {
-            Text(
-                "Tasks",
-                style = AppTypography.HeaderTitle.copy(color = AppTheme.Ink900),
-            )
-
-            // Search pill
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(46.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(AppTheme.Surface)
-                    .shadow(8.dp, RoundedCornerShape(14.dp), spotColor = AppTheme.ShadowSpotSoft)
-                    .padding(horizontal = 14.dp),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("🔍", fontSize = 14.sp)
-                    Spacer(Modifier.width(10.dp))
+            // Eyebrow row: label + live count badge
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text  = "MY TASKS",
+                    style = AppTypography.labelSmall.copy(
+                        color         = Color.White.copy(alpha = 0.70f),
+                        letterSpacing = 1.8.sp,
+                    ),
+                )
+                Spacer(Modifier.weight(1f))
+                Row(
+                    modifier          = Modifier
+                        .clip(AppShapes.pill)
+                        .background(Color.White.copy(alpha = 0.18f))
+                        .padding(horizontal = AppTheme.SpSm, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF6EE7B7)),
+                    )
+                    Spacer(Modifier.width(6.dp))
                     Text(
-                        if (query.isBlank()) "Search by title or location" else query,
-                        color = if (query.isBlank()) AppTheme.Ink300 else AppTheme.Ink900,
-                        fontSize = 14.sp,
+                        text  = "$activeCount active",
+                        style = AppTypography.captionLarge.copy(
+                            color      = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
                     )
                 }
             }
 
-            // Priority filter chips
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(label = "All",    selected = priorityFilter == null,
-                           onClick = { priorityFilter = null },
-                           tint = AppTheme.Brand, bg = AppTheme.Brand50)
-                FilterChip(label = "High",   selected = priorityFilter == TaskPriority.High,
-                           onClick = { priorityFilter = TaskPriority.High },
-                           tint = AppTheme.High, bg = AppTheme.HighBg)
-                FilterChip(label = "Medium", selected = priorityFilter == TaskPriority.Med,
-                           onClick = { priorityFilter = TaskPriority.Med },
-                           tint = AppTheme.Med, bg = AppTheme.MedBg)
-                FilterChip(label = "Low",    selected = priorityFilter == TaskPriority.Low,
-                           onClick = { priorityFilter = TaskPriority.Low },
-                           tint = AppTheme.Low, bg = AppTheme.LowBg)
-            }
-        }
+            Spacer(Modifier.height(AppTheme.SpMd))
 
-        // ── List ───────────────────────────────────────────────────────────
-        if (tasks.isEmpty()) {
-            EmptyState(emoji = "📋", title = "No tasks match",
-                       body = "Try a different filter or check back later.")
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                state = listState,
-                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 100.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(tasks, key = { it.id }) { task ->
-                    TaskRow(task = task, onClick = { onTaskClick(task.id) })
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FilterChip(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    tint: Color,
-    bg: Color,
-) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (selected) bg else AppTheme.Surface)
-            .shadow(
-                elevation = if (selected) 0.dp else 2.dp,
-                shape     = RoundedCornerShape(10.dp),
-                spotColor = AppTheme.ShadowSpotSoft,
+            // Display title
+            Text(
+                text  = "Task Board",
+                style = AppTypography.displayMedium.copy(color = Color.White),
             )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-    ) {
-        Text(
-            label,
-            color      = if (selected) tint else AppTheme.Ink500,
-            fontSize   = 12.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-        )
-    }
-}
-
-@Composable
-private fun TaskRow(task: SampleTask, onClick: () -> Unit) {
-    AppCard(onClick = onClick, contentPadding = 0.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            // Priority strip
-            Box(
-                modifier = Modifier
-                    .width(4.dp)
-                    .height(72.dp)
-                    .clip(RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
-                    .background(task.priority.color)
+            Spacer(Modifier.height(AppTheme.SpXs))
+            Text(
+                text  = "$activeCount active · $doneCount completed",
+                style = AppTypography.bodyMedium.copy(color = Color.White.copy(alpha = 0.80f)),
             )
-            Spacer(Modifier.width(14.dp))
-            Column(
-                modifier = Modifier.weight(1f).padding(vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(task.title, color = AppTheme.Ink900, fontSize = 15.sp,
-                     fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("📍 ${task.location} · ${task.distanceKm} km",
-                     color = AppTheme.Ink500, fontSize = 12.sp)
-                Row(verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StatusPill(label = task.priority.label, color = task.priority.color, bg = task.priority.bg)
-                    StatusPill(label = task.status.label,  color = task.status.color,  bg = task.status.bg)
-                }
-            }
-            Column(
-                modifier = Modifier.padding(end = 16.dp),
-                horizontalAlignment = Alignment.End,
-            ) {
-                Text(task.time, color = AppTheme.Ink900, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                Text(task.day, color = AppTheme.Ink500, fontSize = 11.sp)
-            }
+
+            Spacer(Modifier.height(AppTheme.SpXl))
+
+            // Glass search bar embedded in the gradient header
+            DsGlassSearchBar(
+                query         = query,
+                onQueryChange = onQueryChange,
+                placeholder   = "Search tasks, locations…",
+                onDark        = true,
+            )
         }
     }
 }
 
-/** Maps a Firestore TaskRecord onto the UI's SampleTask shape. */
+/* ── Mapper: Firestore TaskRecord → SampleTask ────────────────────────── */
+
 private fun TaskRecord.toSampleTask(): SampleTask = SampleTask(
-    id = id,
-    title = title,
-    description = "",
-    location = location,
-    distanceKm = 0.0,
-    time = time,
-    day = day,
-    priority = when (priority.lowercase()) {
-        "high"   -> TaskPriority.High
-        "low"    -> TaskPriority.Low
-        else     -> TaskPriority.Med
+    id               = id,
+    title            = title,
+    description      = "",
+    location         = location,
+    distanceKm       = 0.0,
+    time             = time,
+    day              = day,
+    priority         = when (priority.lowercase()) {
+        "high"   -> TaskPriority.Danger
+        "low"    -> TaskPriority.Success
+        else     -> TaskPriority.Warning
     },
-    status = when (status) {
-        "InProgress" -> com.example.uniwattelektrik.core.sample.TaskStatus.InProgress
-        "Done"       -> com.example.uniwattelektrik.core.sample.TaskStatus.Done
-        else         -> com.example.uniwattelektrik.core.sample.TaskStatus.Todo
+    status           = when (status) {
+        "InProgress" -> TaskStatus.InProgress
+        "Done"       -> TaskStatus.Done
+        else         -> TaskStatus.Todo
     },
     assigneeInitials = assigneeInitials.ifBlank { "??" },
 )
-
-@Composable
-private fun StatusPill(label: String, color: Color, bg: Color) {
-    Box(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(bg)
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-    ) {
-        Text(label, color = color, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-    }
-}

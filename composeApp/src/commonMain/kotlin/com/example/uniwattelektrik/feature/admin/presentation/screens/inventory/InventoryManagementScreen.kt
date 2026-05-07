@@ -1,5 +1,7 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens.inventory
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -61,6 +63,7 @@ fun InventoryManagementScreen(
     onPriceList: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    TrackScreenPerformance("InventoryManagementScreen")
     SetStatusBar(color = PremiumHeaderStatusBarColor, darkIcons = false)
 
     val modules = listOf(
@@ -75,15 +78,15 @@ fun InventoryManagementScreen(
         InventoryModule(
             icon = Icons.Outlined.Inventory2,
             iconBg = Color(0xFFF0F4FF),
-            iconTint = AppTheme.Violet,
+            iconTint = AppTheme.Brand,
             title = "Equipment",
             description = "Add and organise equipment grouped by department",
             onClick = onEquipment
         ),
         InventoryModule(
             icon = Icons.Outlined.PriceCheck,
-            iconBg = AppTheme.LowBg,
-            iconTint = AppTheme.Low,
+            iconBg = AppTheme.SuccessBg,
+            iconTint = AppTheme.Success,
             title = "Spare List",
             description = "Define items with size, core, price, stock & HSN",
             onClick = onPriceList
@@ -143,7 +146,7 @@ private fun InventoryModuleCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(8.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowSpotMedium)
+            .shadow(8.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowMd)
             .clip(shape)
             .background(Color.White)
             .premiumPress(onClick = onClick)

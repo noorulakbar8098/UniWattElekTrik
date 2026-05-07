@@ -1,6 +1,10 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import com.example.uniwattelektrik.core.theme.appScreenBackground
+import com.example.uniwattelektrik.core.theme.AppShapes
+import com.example.uniwattelektrik.core.theme.AppTheme
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,14 +47,19 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,6 +76,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.uniwattelektrik.feature.workforce.data.remote.AttendanceRecord
 import com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeRecord
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
@@ -75,23 +85,28 @@ import kotlin.math.absoluteValue
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+// ─── Design tokens — backed by enterprise system ────────────────────────────
+private val ScreenBg     = AppTheme.Bg
+private val CardBg       = AppTheme.Surface
+private val InkPrimary   = AppTheme.Ink900
+private val InkSecondary = AppTheme.Ink500
+private val InkMuted     = AppTheme.Ink300
+private val Brand        = AppTheme.Brand
+private val BrandDeep    = AppTheme.Brand700
+private val Brand50      = AppTheme.Brand50
+private val Success      = AppTheme.Success
+private val SuccessBg    = AppTheme.SuccessBg
+private val Warning      = AppTheme.Warning
+private val WarningBg    = AppTheme.WarningBg
+private val Danger       = AppTheme.Danger
+private val DangerBg     = AppTheme.DangerBg
+private val DividerSoft  = AppTheme.Ink100
+private val ShadowSoft   = AppTheme.ShadowMd
+private val Purple       = AppTheme.Violet
+private val PurpleBg     = AppTheme.PriorityUrgentBg
+
 
 /* ── Local design tokens (match the spec) ───────────────────────────────── */
-private val ScreenBg     = Color(0xFFF4F7FB)
-private val CardBg       = Color(0xFFFFFFFF)
-private val InkPrimary   = Color(0xFF1A2B49)
-private val InkSecondary = Color(0xFF6B7A99)
-private val InkMuted     = Color(0xFF94A3B8)
-private val Brand        = Color(0xFF3B82F6)
-private val BrandDeep    = Color(0xFF1D4ED8)
-private val BrandDark    = Color(0xFF0F172A)
-private val Success      = Color(0xFF22C55E)
-private val Warning      = Color(0xFFF59E0B)
-private val Danger       = Color(0xFFEF4444)
-private val Purple       = Color(0xFF8B5CF6)
-private val ShadowSoft   = Color(0x14172C50)
-private val DividerSoft  = Color(0xFFE2E8F0)
-private val TileBg       = Color(0xFFF1F5F9)
 
 /**
  * Premium Employee Profile screen.
@@ -99,7 +114,7 @@ private val TileBg       = Color(0xFFF1F5F9)
  *  ┌ Gradient header — back · "Employee Profile" · ⋮ · ✏️ ─┐
  *  │ Avatar (gradient) + name + role + status pill        │
  *  ├ Floating stats card (Tasks · SLA · Rating · Attend.) ┤
- *  │ Tabs — Overview · Tasks · Activity · Docs            │
+ *  │ Tabs — Overview · Tasks · Performance · Docs         │
  *  │ Quick actions — Message · Call · Locate              │
  *  │ Contact card (phone, email, address)                 │
  *  │ Joined info                                          │
@@ -113,9 +128,12 @@ fun AdminEmployeeDetailScreen(
     workforceVm: WorkforceViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    adminUid: String = "",
 ) {
-    val employees by workforceVm.employees.collectAsStateWithLifecycle()
-    val tasks     by workforceVm.tasks.collectAsStateWithLifecycle()
+    TrackScreenPerformance("AdminEmployeeDetailScreen")
+    val employees  by workforceVm.employees.collectAsStateWithLifecycle()
+    val tasks      by workforceVm.tasks.collectAsStateWithLifecycle()
+    val attendance by workforceVm.attendance.collectAsStateWithLifecycle()
 
     com.example.uniwattelektrik.core.theme.SetStatusBar(color = Brand, darkIcons = false)
 
@@ -133,18 +151,59 @@ fun AdminEmployeeDetailScreen(
         return
     }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope             = rememberCoroutineScope()
+
+    val myAttendance = remember(attendance, employeeId) {
+        attendance.filter { it.userId == employeeId }
+            .sortedByDescending { it.checkInMs }
+    }
+
     val activeTaskCount = myTasks.count { it.status != "Done" }
     val completedCount  = myTasks.count { it.status == "Done" }
     val totalTasks      = myTasks.size
-    val slaPct          = 96
-    val rating          = 4.8
-    val attendancePct   = 98
-    val performance     = OverallPerformance(
-        overall = 96, sla = 96, quality = 94, attendance = 98, customer = 4.8,
+
+    // ── Real performance calculation ────────────────────────────────────────
+    val nowMs = remember { nowEpochMillis() }
+    val thirtyDaysMs = 30L * 24 * 60 * 60 * 1000
+    val recentAttendance = myAttendance.filter { it.checkInMs >= nowMs - thirtyDaysMs }
+
+    val attendancePct = if (recentAttendance.isEmpty()) 0 else {
+        val days = recentAttendance.map {
+            Instant.fromEpochMilliseconds(it.checkInMs)
+                .toLocalDateTime(TimeZone.currentSystemDefault()).date
+        }.toSet().size
+        ((days.toFloat() / 26f) * 100).toInt().coerceIn(0, 100)
+    }
+
+    val qualityPct = if (totalTasks == 0) 0 else
+        ((completedCount.toFloat() / totalTasks) * 100).toInt()
+
+    val completedOnTime = myTasks.count { task ->
+        task.status == "Done" && task.completedAt != null && task.scheduledDateMs != null &&
+            task.completedAt <= task.scheduledDateMs
+    }
+    val slaPct = if (completedCount == 0) 0 else
+        ((completedOnTime.toFloat() / completedCount) * 100).toInt()
+
+    val overallPct = when {
+        totalTasks == 0 && recentAttendance.isEmpty() -> 0
+        else -> ((attendancePct * 0.4f) + (qualityPct * 0.4f) + (slaPct * 0.2f)).toInt()
+    }
+
+    val performance = OverallPerformance(
+        overall    = overallPct,
+        sla        = slaPct,
+        quality    = qualityPct,
+        attendance = attendancePct,
+        customer   = 0.0,
     )
 
+    val rating = if (overallPct == 0) 0.0 else (overallPct / 20.0).coerceIn(0.0, 5.0)
+
+    Box(modifier = modifier.fillMaxSize()) {
     LazyColumn(
-        modifier = modifier.fillMaxSize().background(appScreenBackground()),
+        modifier = Modifier.fillMaxSize().background(appScreenBackground()),
         contentPadding = PaddingValues(bottom = 110.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
@@ -154,16 +213,12 @@ fun AdminEmployeeDetailScreen(
                     employee = employee,
                     onBack   = onBack,
                 )
-                // Floating stats card overlaps header (≈ 40dp)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
                         .offset(y = 460.dp.minus(40.dp)),
-                ) {
-                    // (Real overlap is handled by the column below — this
-                    //  placeholder ensures we leave space at the right point.)
-                }
+                ) { }
             }
         }
 
@@ -197,51 +252,108 @@ fun AdminEmployeeDetailScreen(
             }
         }
 
-        // Quick actions
-        item {
-            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                QuickActions(
-                    onMessage = {},
-                    onCall    = {},
-                    onLocate  = {},
-                )
+        // ── Overview tab content ────────────────────────────────────────────
+        if (tab == "Overview") {
+            // Quick actions
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    QuickActions(
+                        onMessage = {},
+                        onCall    = {},
+                        onLocate  = {},
+                    )
+                }
+                Spacer(Modifier.height(20.dp))
             }
-            Spacer(Modifier.height(20.dp))
+
+            // Contact card
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    ContactCard(employee = employee, onEdit = {})
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+
+            // Joined card
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    JoinedRow(employee = employee)
+                }
+                Spacer(Modifier.height(20.dp))
+            }
+
+            // Active assignments (top 3 preview)
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    ActiveAssignmentsCard(tasks = myTasks.take(3))
+                }
+                Spacer(Modifier.height(20.dp))
+            }
         }
 
-        // Contact card
-        item {
-            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                ContactCard(employee = employee, onEdit = {})
+        // ── Tasks tab content ───────────────────────────────────────────────
+        if (tab == "Tasks") {
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    ActiveAssignmentsCard(tasks = myTasks)
+                }
+                Spacer(Modifier.height(20.dp))
             }
-            Spacer(Modifier.height(16.dp))
         }
 
-        // Joined card
-        item {
-            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                JoinedRow(employee = employee)
+        // ── Performance tab content ─────────────────────────────────────────
+        if (tab == "Performance") {
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    PremiumPerformanceHero(performance = performance)
+                }
+                Spacer(Modifier.height(14.dp))
             }
-            Spacer(Modifier.height(20.dp))
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    PremiumMetricGrid(performance = performance)
+                }
+                Spacer(Modifier.height(14.dp))
+            }
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    PremiumTaskMetrics(
+                        total     = totalTasks,
+                        completed = completedCount,
+                        onTime    = completedOnTime,
+                        active    = activeTaskCount,
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+            }
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    PremiumAttendanceLog(records = myAttendance.take(14))
+                }
+                Spacer(Modifier.height(20.dp))
+            }
         }
 
-        // Performance card
-        item {
-            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                PerformanceCard(performance = performance)
+        // ── Docs tab content ────────────────────────────────────────────────
+        if (tab == "Docs") {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 40.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "Coming soon",
+                        color = InkSecondary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
             }
-            Spacer(Modifier.height(20.dp))
         }
 
-        // Active assignments
-        item {
-            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                ActiveAssignmentsCard(tasks = myTasks.take(3))
-            }
-            Spacer(Modifier.height(20.dp))
-        }
-
-        // Bottom actions
+        // Bottom actions (always visible)
         item {
             Row(
                 modifier = Modifier
@@ -255,6 +367,9 @@ fun AdminEmployeeDetailScreen(
                     tint = Warning,
                     bg = Color(0xFFFEF3C7),
                     modifier = Modifier.weight(1f),
+                    onClick = {
+                        scope.launch { snackbarHostState.showSnackbar("Coming soon") }
+                    },
                 )
                 BottomAction(
                     icon = Icons.Filled.Insights,
@@ -262,6 +377,9 @@ fun AdminEmployeeDetailScreen(
                     tint = Brand,
                     bg = Color(0xFFE6F0FE),
                     modifier = Modifier.weight(1f),
+                    onClick = {
+                        scope.launch { snackbarHostState.showSnackbar("Coming soon") }
+                    },
                 )
                 BottomAction(
                     icon = Icons.Filled.Block,
@@ -270,10 +388,24 @@ fun AdminEmployeeDetailScreen(
                     bg = Color(0xFFFEE2E2),
                     modifier = Modifier.weight(1f),
                     labelColor = Danger,
+                    onClick = {
+                        workforceVm.updateEmployeeStatus(
+                            adminId    = adminUid,
+                            employeeId = employee.id,
+                            status     = "Relieved",
+                        )
+                        onBack()
+                    },
                 )
             }
         }
-    }
+    } // end LazyColumn
+
+    SnackbarHost(
+        hostState = snackbarHostState,
+        modifier  = Modifier.align(Alignment.BottomCenter),
+    )
+    } // end outer Box
 }
 
 /* ─────────────────────────────────────────────────────────────────────── *
@@ -473,7 +605,7 @@ private fun StatsCard(
                  valueColor = Success, percentSuffix = true,
                  modifier = Modifier.weight(1f))
         VerticalDivider()
-        StatItem(value = "$rating★", label = "RATING",
+        StatItem(value = "${"%.1f".format(rating)}★", label = "RATING",
                  valueColor = InkPrimary, modifier = Modifier.weight(1f))
         VerticalDivider()
         StatItem(value = "$attendance%", label = "ATTEND.",
@@ -550,7 +682,7 @@ private fun TabsRow(current: String, onSelect: (String) -> Unit) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        listOf("Overview", "Tasks", "Activity", "Docs").forEach { name ->
+        listOf("Overview", "Tasks", "Performance", "Docs").forEach { name ->
             val selected = current == name
             Box(
                 modifier = Modifier
@@ -765,99 +897,505 @@ private data class OverallPerformance(
     val customer: Double,
 )
 
+private fun perfGrade(pct: Int): Pair<String, Color> = when {
+    pct >= 85 -> "EXCELLENT" to Color(0xFF22C55E)
+    pct >= 70 -> "GOOD"      to Color(0xFF3B82F6)
+    pct >= 50 -> "AVERAGE"   to Color(0xFFF59E0B)
+    else      -> "BELOW AVG" to Color(0xFFEF4444)
+}
+
+/* ─────────────────────────────────────────────────────────────────────── *
+ *  PREMIUM PERFORMANCE HERO
+ * ─────────────────────────────────────────────────────────────────────── */
+
 @Composable
-private fun PerformanceCard(performance: OverallPerformance) {
-    SectionCard(title = "Performance · April") {
-        // Title trailing — TOP 5 badge sits inside SectionCard via custom layout
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            /* Donut */
-            Box(
-                modifier = Modifier
-                    .size(120.dp),
-                contentAlignment = Alignment.Center,
+private fun PremiumPerformanceHero(performance: OverallPerformance) {
+    val (gradeLabel, gradeColor) = perfGrade(performance.overall)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(20.dp, RoundedCornerShape(24.dp), spotColor = Brand.copy(alpha = 0.30f))
+            .clip(RoundedCornerShape(24.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(Color(0xFF1E3A8A), Color(0xFF1D4ED8), Color(0xFF2563EB)),
+                )
+            )
+            .padding(horizontal = 22.dp, vertical = 22.dp),
+    ) {
+        // Decorative background circles
+        androidx.compose.foundation.Canvas(modifier = Modifier.matchParentSize()) {
+            drawCircle(
+                color  = Color.White.copy(alpha = 0.04f),
+                radius = 180.dp.toPx(),
+                center = androidx.compose.ui.geometry.Offset(size.width * 0.85f, -30f),
+            )
+            drawCircle(
+                color  = Color.White.copy(alpha = 0.03f),
+                radius = 90.dp.toPx(),
+                center = androidx.compose.ui.geometry.Offset(size.width * 0.10f, size.height * 1.15f),
+            )
+        }
+
+        Column {
+            Row(
+                modifier          = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                ProgressRing(percent = performance.overall, tint = Brand)
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                // Left — title + grade pill
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        performance.overall.toString(),
-                        color = InkPrimary,
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        "OVERALL",
-                        color = InkSecondary,
-                        fontSize = 10.sp,
+                        "Performance Score",
+                        color      = Color.White.copy(alpha = 0.82f),
+                        fontSize   = 13.sp,
                         fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 0.8.sp,
+                        letterSpacing = 0.4.sp,
                     )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        "Last 30 days",
+                        color    = Color.White.copy(alpha = 0.50f),
+                        fontSize = 11.sp,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(gradeColor.copy(alpha = 0.18f))
+                            .border(1.dp, gradeColor.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+                            .padding(horizontal = 14.dp, vertical = 5.dp),
+                    ) {
+                        Text(
+                            gradeLabel,
+                            color      = gradeColor,
+                            fontSize   = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp,
+                        )
+                    }
+                }
+
+                // Right — score ring
+                Box(
+                    modifier          = Modifier.size(130.dp),
+                    contentAlignment  = Alignment.Center,
+                ) {
+                    GradientProgressRing(percent = performance.overall)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            "${performance.overall}",
+                            color      = Color.White,
+                            fontSize   = 38.sp,
+                            fontWeight = FontWeight.Bold,
+                            lineHeight = 38.sp,
+                        )
+                        Text(
+                            "/ 100",
+                            color    = Color.White.copy(alpha = 0.55f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
                 }
             }
 
-            Spacer(Modifier.width(18.dp))
+            Spacer(Modifier.height(18.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.13f)))
+            Spacer(Modifier.height(16.dp))
 
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+            // Bottom mini stats row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment     = Alignment.CenterVertically,
             ) {
-                MetricRow(dot = Brand,   label = "SLA Adherence",   value = "${performance.sla}%")
-                MetricRow(dot = Success, label = "Task Quality",     value = "${performance.quality}%")
-                MetricRow(dot = Warning, label = "Attendance",       value = "${performance.attendance}%")
-                MetricRow(dot = Purple,  label = "Customer ★",       value = "${performance.customer}/5")
+                HeroMiniStat(label = "SLA",     value = "${performance.sla}%")
+                Box(Modifier.width(1.dp).height(34.dp).background(Color.White.copy(alpha = 0.15f)))
+                HeroMiniStat(label = "Quality", value = "${performance.quality}%")
+                Box(Modifier.width(1.dp).height(34.dp).background(Color.White.copy(alpha = 0.15f)))
+                HeroMiniStat(label = "Attend.", value = "${performance.attendance}%")
             }
         }
     }
 }
 
 @Composable
-private fun MetricRow(dot: Color, label: String, value: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(dot),
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(label, color = InkPrimary, fontSize = 13.sp,
-             fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-        Text(value, color = InkPrimary, fontSize = 13.sp,
-             fontWeight = FontWeight.Bold)
+private fun HeroMiniStat(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(2.dp))
+        Text(label, color = Color.White.copy(alpha = 0.55f), fontSize = 10.sp, fontWeight = FontWeight.Medium)
     }
 }
 
 @Composable
-private fun ProgressRing(percent: Int, tint: Color) {
+private fun GradientProgressRing(percent: Int) {
     androidx.compose.foundation.Canvas(
-        modifier = Modifier.size(120.dp).aspectRatio(1f),
+        modifier = Modifier.size(130.dp).aspectRatio(1f),
     ) {
-        val stroke = 10.dp.toPx()
-        val sweep = (percent.coerceIn(0, 100) / 100f) * 360f
+        val stroke = 12.dp.toPx()
+        val sweep  = (percent.coerceIn(0, 100) / 100f) * 360f
+        val inset  = stroke / 2f
+        val arcSz  = Size(size.width - stroke, size.height - stroke)
+        val tl     = androidx.compose.ui.geometry.Offset(inset, inset)
         // Track
         drawArc(
-            color = Color(0xFFE2E8F0),
-            startAngle = -90f,
-            sweepAngle = 360f,
-            useCenter = false,
-            style = Stroke(width = stroke, cap = StrokeCap.Round),
-            size = Size(size.width - stroke, size.height - stroke),
-            topLeft = androidx.compose.ui.geometry.Offset(stroke / 2, stroke / 2),
+            color = Color.White.copy(alpha = 0.20f),
+            startAngle = -90f, sweepAngle = 360f, useCenter = false,
+            style   = Stroke(width = stroke, cap = StrokeCap.Round),
+            size    = arcSz, topLeft = tl,
         )
-        // Filled
-        drawArc(
-            color = tint,
-            startAngle = -90f,
-            sweepAngle = sweep,
-            useCenter = false,
-            style = Stroke(width = stroke, cap = StrokeCap.Round),
-            size = Size(size.width - stroke, size.height - stroke),
-            topLeft = androidx.compose.ui.geometry.Offset(stroke / 2, stroke / 2),
-        )
+        // Filled arc
+        if (sweep > 0f) {
+            drawArc(
+                color = Color.White,
+                startAngle = -90f, sweepAngle = sweep, useCenter = false,
+                style   = Stroke(width = stroke, cap = StrokeCap.Round),
+                size    = arcSz, topLeft = tl,
+            )
+        }
     }
 }
+
+/* ─────────────────────────────────────────────────────────────────────── *
+ *  PREMIUM METRIC GRID  (2 × 2 coloured tiles)
+ * ─────────────────────────────────────────────────────────────────────── */
+
+@Composable
+private fun PremiumMetricGrid(performance: OverallPerformance) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            MetricTile(
+                label    = "SLA Adherence",
+                value    = performance.sla,
+                icon     = Icons.Filled.Insights,
+                gradient = listOf(Color(0xFF1E40AF), Color(0xFF3B82F6)),
+                modifier = Modifier.weight(1f),
+            )
+            MetricTile(
+                label    = "Task Quality",
+                value    = performance.quality,
+                icon     = Icons.AutoMirrored.Filled.Assignment,
+                gradient = listOf(Color(0xFF065F46), Color(0xFF22C55E)),
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            MetricTile(
+                label    = "Attendance",
+                value    = performance.attendance,
+                icon     = Icons.Filled.Event,
+                gradient = listOf(Color(0xFF92400E), Color(0xFFF59E0B)),
+                modifier = Modifier.weight(1f),
+            )
+            MetricTile(
+                label    = "Customer ★",
+                value    = (performance.customer * 20).toInt().coerceIn(0, 100),
+                icon     = Icons.Filled.Star,
+                gradient = listOf(Color(0xFF4C1D95), Color(0xFF8B5CF6)),
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun MetricTile(
+    label: String,
+    value: Int,
+    icon: ImageVector,
+    gradient: List<Color>,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .height(140.dp)
+            .shadow(12.dp, RoundedCornerShape(20.dp), spotColor = gradient.last().copy(alpha = 0.28f))
+            .clip(RoundedCornerShape(20.dp))
+            .background(Brush.linearGradient(gradient))
+            .padding(16.dp),
+    ) {
+        // Decorative circle accent
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .align(Alignment.TopEnd)
+                .offset(x = 14.dp, y = (-14).dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.07f)),
+        )
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            // Icon chip
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.White.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon, contentDescription = null,
+                    tint = Color.White, modifier = Modifier.size(18.dp),
+                )
+            }
+            Column {
+                Text(
+                    "$value%",
+                    color      = Color.White,
+                    fontSize   = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    lineHeight = 28.sp,
+                )
+                Spacer(Modifier.height(1.dp))
+                Text(
+                    label,
+                    color    = Color.White.copy(alpha = 0.72f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.height(8.dp))
+                // Progress bar
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color.White.copy(alpha = 0.22f)),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(value.coerceIn(0, 100) / 100f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(Color.White),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────── *
+ *  PREMIUM TASK METRICS
+ * ─────────────────────────────────────────────────────────────────────── */
+
+@Composable
+private fun PremiumTaskMetrics(total: Int, completed: Int, onTime: Int, active: Int) {
+    SectionCard(title = "Task Breakdown") {
+        if (total == 0) {
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("No tasks assigned", color = InkMuted, fontSize = 13.sp)
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Summary badges
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    TaskStatBadge(value = total.toString(),     label = "Total",   color = InkPrimary, bg = Color(0xFFF1F5F9))
+                    TaskStatBadge(value = completed.toString(), label = "Done",    color = Success,    bg = Color(0xFFDCFCE7))
+                    TaskStatBadge(value = active.toString(),    label = "Active",  color = Warning,    bg = Color(0xFFFEF3C7))
+                    TaskStatBadge(value = onTime.toString(),    label = "On-Time", color = Brand,      bg = Color(0xFFE6F0FE))
+                }
+                // Progress bars
+                val completionPct = if (total > 0) (completed.toFloat() / total * 100).toInt() else 0
+                PerformanceBar(label = "Completion Rate",   pct = completionPct, fillColor = Success)
+
+                val onTimePct = if (completed > 0) (onTime.toFloat() / completed * 100).toInt() else 0
+                PerformanceBar(label = "On-Time Delivery",  pct = onTimePct,     fillColor = Brand)
+
+                val activePct = if (total > 0) (active.toFloat() / total * 100).toInt() else 0
+                PerformanceBar(label = "In-Progress Share", pct = activePct,     fillColor = Warning)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TaskStatBadge(value: String, label: String, color: Color, bg: Color) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(bg)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(value, color = color, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(2.dp))
+        Text(label, color = color.copy(alpha = 0.65f), fontSize = 9.sp,
+             fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp)
+    }
+}
+
+@Composable
+private fun PerformanceBar(label: String, pct: Int, fillColor: Color) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                label,
+                color      = InkSecondary,
+                fontSize   = 12.sp,
+                fontWeight = FontWeight.Medium,
+                modifier   = Modifier.weight(1f),
+            )
+            Text("$pct%", color = fillColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(7.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(fillColor.copy(alpha = 0.12f)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(pct.coerceIn(0, 100) / 100f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Brush.horizontalGradient(listOf(fillColor, fillColor.copy(alpha = 0.65f)))),
+            )
+        }
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────── *
+ *  PREMIUM ATTENDANCE LOG
+ * ─────────────────────────────────────────────────────────────────────── */
+
+@Composable
+private fun PremiumAttendanceLog(records: List<AttendanceRecord>) {
+    SectionCard(title = "Attendance Log · Last 14 days") {
+        if (records.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("No attendance records", color = InkMuted, fontSize = 13.sp)
+            }
+        } else {
+            Column {
+                records.forEachIndexed { i, record ->
+                    PremiumAttendanceRow(record = record)
+                    if (i < records.lastIndex) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .padding(start = 56.dp)
+                                .background(DividerSoft),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PremiumAttendanceRow(record: AttendanceRecord) {
+    val checkInTime = remember(record.checkInMs) {
+        val local = Instant.fromEpochMilliseconds(record.checkInMs)
+            .toLocalDateTime(TimeZone.currentSystemDefault())
+        "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
+    }
+    val checkOutTime = remember(record.checkOutMs) {
+        record.checkOutMs?.let { ms ->
+            val local = Instant.fromEpochMilliseconds(ms)
+                .toLocalDateTime(TimeZone.currentSystemDefault())
+            "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
+        }
+    }
+    val dateLabel = remember(record.dateMs) {
+        val local = Instant.fromEpochMilliseconds(record.dateMs)
+            .toLocalDateTime(TimeZone.currentSystemDefault())
+        "${local.dayOfMonth} ${local.month.name.take(3).lowercase().replaceFirstChar { it.uppercase() }}"
+    }
+    val dayName = remember(record.dateMs) {
+        val local = Instant.fromEpochMilliseconds(record.dateMs)
+            .toLocalDateTime(TimeZone.currentSystemDefault())
+        local.dayOfWeek.name.take(3).lowercase().replaceFirstChar { it.uppercase() }
+    }
+    val late   = record.checkInStatus == "LATE"
+    val dotClr = if (late) Danger else Success
+    val dotBg  = if (late) DangerBg else SuccessBg
+
+    Row(
+        modifier          = Modifier.fillMaxWidth().padding(vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Date circle
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .shadow(4.dp, CircleShape, spotColor = dotClr.copy(alpha = 0.18f))
+                .clip(CircleShape)
+                .background(dotBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    dateLabel.substringBefore(" "),
+                    color      = dotClr,
+                    fontSize   = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    lineHeight = 14.sp,
+                )
+                Text(
+                    dateLabel.substringAfter(" "),
+                    color    = dotClr.copy(alpha = 0.70f),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 10.sp,
+                )
+            }
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(dayName, color = InkPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(6.dp).clip(CircleShape).background(Success))
+                Spacer(Modifier.width(4.dp))
+                Text("In  $checkInTime", color = InkSecondary, fontSize = 11.sp)
+                if (checkOutTime != null) {
+                    Text("  ·  ", color = InkMuted, fontSize = 11.sp)
+                    Box(Modifier.size(6.dp).clip(CircleShape).background(Danger.copy(alpha = 0.70f)))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Out $checkOutTime", color = InkSecondary, fontSize = 11.sp)
+                } else {
+                    Text("  ·  On Duty", color = Success, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+
+        // Status pill
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(dotBg)
+                .border(1.dp, dotClr.copy(alpha = 0.25f), RoundedCornerShape(999.dp))
+                .padding(horizontal = 9.dp, vertical = 4.dp),
+        ) {
+            Text(
+                if (late) "LATE" else "ON TIME",
+                color      = dotClr,
+                fontSize   = 9.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp,
+            )
+        }
+    }
+}
+
 
 /* ─────────────────────────────────────────────────────────────────────── *
  *  ACTIVE ASSIGNMENTS
@@ -904,7 +1442,7 @@ private fun AssignmentRow(task: TaskRecord) {
 
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (task.priority.equals("High", true)) {
+                if (task.priority.equals("Danger", true)) {
                     Icon(
                         imageVector = Icons.Filled.Warning,
                         contentDescription = null,
@@ -977,6 +1515,7 @@ private fun BottomAction(
     bg: Color,
     modifier: Modifier = Modifier,
     labelColor: Color = InkPrimary,
+    onClick: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -984,7 +1523,7 @@ private fun BottomAction(
             .shadow(8.dp, RoundedCornerShape(16.dp), spotColor = ShadowSoft)
             .clip(RoundedCornerShape(16.dp))
             .background(CardBg)
-            .clickable {}
+            .clickable(onClick = onClick)
             .padding(vertical = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1037,25 +1576,7 @@ private fun SectionCard(
                 Text(title, color = InkPrimary, fontSize = 16.sp,
                      fontWeight = FontWeight.Bold,
                      modifier = Modifier.weight(1f))
-                if (title == "Performance · April") {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(Color(0xFFDCFCE7))
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(5.dp).clip(CircleShape).background(Success),
-                            )
-                            Spacer(Modifier.width(5.dp))
-                            Text("TOP 5", color = Success, fontSize = 10.sp,
-                                 fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
-                        }
-                    }
-                } else if (trailingAction != null) {
+                if (trailingAction != null) {
                     Text(
                         trailingAction,
                         color = Brand,

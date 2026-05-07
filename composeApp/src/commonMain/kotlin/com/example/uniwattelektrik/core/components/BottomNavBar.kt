@@ -106,9 +106,9 @@ fun AppBottomNavBar(
                     .size(58.dp)
                     .align(Alignment.TopCenter)
                     .offset(y = (-2).dp)
-                    .shadow(elevation = 16.dp, shape = CircleShape, spotColor = AppTheme.ShadowSpotBlue)
+                    .shadow(elevation = 8.dp, shape = CircleShape, spotColor = AppTheme.ShadowMd)
                     .clip(CircleShape)
-                    .background(Brush.verticalGradient(listOf(AppTheme.Brand, AppTheme.Navy)))
+                    .background(Brush.verticalGradient(listOf(AppTheme.Brand, AppTheme.Brand700)))
                     .clickable(onClick = onFabClick),
                 contentAlignment = Alignment.Center,
             ) {

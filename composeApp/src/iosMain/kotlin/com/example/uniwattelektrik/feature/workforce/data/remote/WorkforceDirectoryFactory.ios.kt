@@ -161,6 +161,7 @@ private class StubWorkforceDirectory : WorkforceDirectory {
     override suspend fun deleteEquipment(adminId: String, equipmentId: String) { /* no-op */ }
 
     override suspend fun deleteAllData(adminId: String) { /* no-op */ }
+    override suspend fun updateEmployeeStatus(adminId: String, employeeId: String, status: String) { /* no-op */ }
 }
 
 actual object WorkforceDirectoryFactory {

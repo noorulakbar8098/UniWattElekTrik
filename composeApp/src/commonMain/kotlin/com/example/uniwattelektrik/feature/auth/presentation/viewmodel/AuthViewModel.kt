@@ -123,7 +123,23 @@ class AuthViewModel(
         _state.value = AuthUiState.Loading
         viewModelScope.launch {
             val nextState = when (val result = signIn(email, pwd, asAdmin = asAdmin)) {
-                is Resource.Success -> AuthUiState.Verified(result.data.user)
+                is Resource.Success -> {
+                    val user = result.data.user
+                    val accountIsAdmin = user.adminId != null
+                    when {
+                        // User account tried to log in via Admin login screen
+                        asAdmin && !accountIsAdmin -> AuthUiState.Error(
+                            "This is an employee account. Please use the Employee login.",
+                            previous,
+                        )
+                        // Admin account tried to log in via User login screen
+                        !asAdmin && accountIsAdmin -> AuthUiState.Error(
+                            "This is an admin account. Please use the Admin login.",
+                            previous,
+                        )
+                        else -> AuthUiState.Verified(user)
+                    }
+                }
                 is Resource.Failure -> AuthUiState.Error(result.error.message, previous)
             }
             holdLoadingForMinimum(startedAt)

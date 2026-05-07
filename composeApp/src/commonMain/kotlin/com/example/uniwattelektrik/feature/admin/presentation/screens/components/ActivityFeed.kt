@@ -1,11 +1,14 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,10 +27,21 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Assignment
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.HowToReg
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,6 +49,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -110,7 +125,7 @@ sealed interface ActivityItem {
         override val photoUrl: String? = null,
     ) : ActivityItem {
         override val emoji = "👤"
-        override val tint  = Color(0xFF8B5CF6)
+        override val tint  = Color(0xFF1A6BF5)
         override val category = "people"
     }
 
@@ -188,13 +203,15 @@ fun List<ActivityItem>.applyFilter(filter: FeedFilter): List<ActivityItem> {
  *  Feed builder — pure, easy to unit-test
  * ────────────────────────────────────────────────────────────────────────── */
 
-private const val LOW_STOCK_THRESHOLD     = 20
+private const val LOW_STOCK_THRESHOLD     = 10   // only show truly critical stock
 private const val OVERDUE_GRACE_MS         = 0L
-private const val MAX_FEED_ITEMS           = 25
+private const val MAX_FEED_ITEMS           = 20
 private const val AGG_WINDOW_MS            = 10L * 60L * 1000L     // 10 minutes
 private const val AGG_MIN_COUNT            = 3
 const val FRESH_INDICATOR_WINDOW_MS        = 60L * 1000L           // 60 seconds
 private const val MISSED_CHECKOUT_AFTER_MS = 12L * 60L * 60L * 1000L
+private const val RECENT_WINDOW_MS         = 2L * 24L * 60L * 60L * 1000L  // 48 h
+internal const val ACTIVITY_INITIAL_VISIBLE = 4
 
 /**
  * Merges multiple Firestore-derived lists into a single chronologically sorted
@@ -222,17 +239,20 @@ fun buildActivityFeed(
         val assignee  = empById[uid.orEmpty()]?.name ?: "Unassigned"
         val photoUrl  = photo(uid)
         when {
-            t.status == "Done" && t.completedAt != null -> {
+            // Completed tasks — only last 48 h
+            t.status == "Done" && t.completedAt != null
+                    && (now - t.completedAt!!) <= RECENT_WINDOW_MS -> {
                 out += ActivityItem.TaskCompleted(
                     at       = t.completedAt!!,
                     title    = "Task completed",
-                    subtitle = "$assignee → ${t.title}",
+                    subtitle = "$assignee · ${t.title}",
                     taskId   = t.id,
                     userId   = uid,
                     photoUrl = photoUrl,
                 )
             }
 
+            // Overdue tasks — always show (critical)
             t.dueDate != null && t.dueDate!! < now - OVERDUE_GRACE_MS && t.status != "Done" -> {
                 out += ActivityItem.TaskOverdue(
                     at       = t.dueDate!!,
@@ -243,34 +263,13 @@ fun buildActivityFeed(
                     photoUrl = photoUrl,
                 )
             }
-
-            t.scheduledDateMs != null -> {
-                out += ActivityItem.TaskAssigned(
-                    at       = t.scheduledDateMs!!,
-                    title    = "Task assigned",
-                    subtitle = "${t.title} → $assignee",
-                    taskId   = t.id,
-                    userId   = uid,
-                    photoUrl = photoUrl,
-                )
-            }
         }
     }
 
-    // ── Employees ──
-    for (e in employees) {
-        val joining = e.joiningDateMs ?: e.updatedAt ?: continue
-        out += ActivityItem.EmployeeOnboarded(
-            at         = joining,
-            title      = "Employee onboarded",
-            subtitle   = "${e.name} · ${e.role}",
-            employeeId = e.id,
-            photoUrl   = e.photoUrl.takeIf { it.isNotBlank() },
-        )
-    }
-
-    // ── Attendance ──
+    // ── Attendance — today's check-ins only ──
+    val todayStart = now - (now % DAY_MS_LOCAL)
     for (a in attendance) {
+        if (a.checkInMs < todayStart) continue          // older than today → skip
         val emp      = empById[a.userId]?.name ?: "Employee"
         val photoUrl = photo(a.userId)
         out += ActivityItem.CheckedIn(
@@ -282,7 +281,8 @@ fun buildActivityFeed(
             userId       = a.userId,
             photoUrl     = photoUrl,
         )
-        if (a.checkOutMs != null) {
+        // Check-outs only if happened today
+        if (a.checkOutMs != null && a.checkOutMs!! >= todayStart) {
             out += ActivityItem.CheckedOut(
                 at           = a.checkOutMs!!,
                 title        = "Checked out",
@@ -294,14 +294,26 @@ fun buildActivityFeed(
         }
     }
 
-    // ── Low-stock alerts (treat as "happening now") ──
+    // ── Critical stock alerts only (0 stock = out of stock) ──
     val lowStockAt = now
-    for (s in spares.filter { it.stockQty in 0..LOW_STOCK_THRESHOLD }) {
+    for (s in spares.filter { it.stockQty == 0 }) {
         out += ActivityItem.LowStockAlert(
             at        = lowStockAt,
-            title     = if (s.stockQty == 0) "Out of stock" else "Low stock",
-            subtitle  = "${s.name} · ${s.stockQty} left",
+            title     = "Out of stock",
+            subtitle  = s.name,
             spareItem = s,
+        )
+    }
+    // Low stock (> 0 but ≤ threshold) — only if not too many
+    val lowCount = spares.count { it.stockQty in 1..LOW_STOCK_THRESHOLD }
+    if (lowCount > 0) {
+        val first = spares.first { it.stockQty in 1..LOW_STOCK_THRESHOLD }
+        out += ActivityItem.LowStockAlert(
+            at        = lowStockAt - 1L,    // sort after out-of-stock
+            title     = "Low stock alert",
+            subtitle  = if (lowCount == 1) "${first.name} · ${first.stockQty} left"
+                        else "$lowCount items below threshold",
+            spareItem = first,
         )
     }
 
@@ -396,6 +408,7 @@ enum class FeedBucket(val label: String) {
 }
 
 private const val DAY_MS = 24L * 60L * 60L * 1000L
+private const val DAY_MS_LOCAL = DAY_MS   // alias used in buildActivityFeed
 
 fun bucketOf(now: Long, at: Long): FeedBucket {
     val diff = now - at
@@ -454,35 +467,74 @@ fun ActivityFeedCard(
         if (finalBucket != null && bucketItems.isNotEmpty()) add(finalBucket to bucketItems)
     }
 
+    // Flatten into a single ordered list for the collapse logic
+    val flatItems: List<Pair<FeedBucket?, ActivityItem>> = buildList {
+        grouped.forEach { (bucket, bucketItems) ->
+            bucketItems.forEachIndexed { idx, item ->
+                add((if (idx == 0) bucket else null) to item)
+            }
+        }
+    }
+
+    var expanded by remember { mutableStateOf(false) }
+    val visibleItems = if (expanded) flatItems else flatItems.take(ACTIVITY_INITIAL_VISIBLE)
+    val hiddenCount = (flatItems.size - ACTIVITY_INITIAL_VISIBLE).coerceAtLeast(0)
+
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
-        grouped.forEach { (bucket, bucketItems) ->
-            FeedBucketHeader(label = bucket.label, count = bucketItems.size)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Color.White)
-                    .padding(horizontal = 4.dp, vertical = 4.dp),
-            ) {
-                Column {
-                    bucketItems.forEachIndexed { idx, item ->
-                        ActivityFeedRow(
-                            item    = item,
-                            now     = now,
-                            onClick = { onItemClick(item) },
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color.White),
+        ) {
+            Column {
+                visibleItems.forEachIndexed { idx, (bucketLabel, item) ->
+                    if (bucketLabel != null) {
+                        FeedBucketHeader(
+                            label = bucketLabel.label,
+                            count = grouped.first { it.first == bucketLabel }.second.size,
                         )
-                        if (idx != bucketItems.lastIndex) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 56.dp, end = 16.dp)
-                                    .height(1.dp)
-                                    .background(Color(0xFFEEF2F7)),
-                            )
-                        }
+                    }
+                    ActivityFeedRow(
+                        item    = item,
+                        now     = now,
+                        onClick = { onItemClick(item) },
+                    )
+                    if (idx != visibleItems.lastIndex) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 56.dp, end = 16.dp)
+                                .height(1.dp)
+                                .background(Color(0xFFEEF2F7)),
+                        )
+                    }
+                }
+
+                // Expand / collapse toggle
+                if (flatItems.size > ACTIVITY_INITIAL_VISIBLE) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(Color(0xFFEEF2F7)),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { expanded = !expanded }
+                            .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text       = if (expanded) "Show less" else "Show $hiddenCount more",
+                            color      = Color(0xFF2979FF),
+                            fontSize   = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
                     }
                 }
             }
@@ -519,6 +571,18 @@ private fun FeedBucketHeader(label: String, count: Int) {
     }
 }
 
+/** Maps each ActivityItem subtype to a Material icon vector. */
+private fun activityIcon(item: ActivityItem): ImageVector = when (item) {
+    is ActivityItem.TaskCompleted    -> Icons.Filled.CheckCircle
+    is ActivityItem.TaskAssigned     -> Icons.AutoMirrored.Filled.Assignment
+    is ActivityItem.TaskOverdue      -> Icons.Filled.Warning
+    is ActivityItem.EmployeeOnboarded -> Icons.Filled.PersonAdd
+    is ActivityItem.CheckedIn        -> Icons.Filled.HowToReg
+    is ActivityItem.CheckedOut       -> Icons.AutoMirrored.Filled.Logout
+    is ActivityItem.LowStockAlert    -> Icons.Filled.Inventory2
+    is ActivityItem.Aggregated       -> Icons.AutoMirrored.Filled.Assignment
+}
+
 @Composable
 private fun ActivityFeedRow(
     item: ActivityItem,
@@ -531,34 +595,41 @@ private fun ActivityFeedRow(
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.Top,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(modifier = Modifier.size(34.dp)) {
-            // Avatar — photo if present, else colored emoji bubble.
+        // Icon bubble — Material icon, no emojis
+        Box(modifier = Modifier.size(36.dp)) {
             val photo = item.photoUrl
             if (!photo.isNullOrBlank()) {
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
-                        .background(item.tint.copy(alpha = 0.14f))
-                        .border(1.5.dp, item.tint.copy(alpha = 0.35f), CircleShape),
+                        .background(item.tint.copy(alpha = 0.12f))
+                        .border(1.5.dp, item.tint.copy(alpha = 0.30f), CircleShape),
                 ) {
                     coil3.compose.AsyncImage(
                         model = photo,
                         contentDescription = null,
-                        modifier = Modifier.size(32.dp).clip(CircleShape),
+                        modifier = Modifier.size(36.dp).clip(CircleShape),
                         contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                     )
                 }
             } else {
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
-                        .background(item.tint.copy(alpha = 0.14f)),
+                        .background(item.tint.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center,
-                ) { Text(item.emoji, fontSize = 14.sp) }
+                ) {
+                    Icon(
+                        imageVector        = activityIcon(item),
+                        contentDescription = null,
+                        tint               = item.tint,
+                        modifier           = Modifier.size(18.dp),
+                    )
+                }
             }
             if (isFresh) {
                 FreshPulseDot(
@@ -661,7 +732,7 @@ sealed interface NeedsAttentionItem {
         val userId: String,
     ) : NeedsAttentionItem {
         override val emoji = "🚪"
-        override val tint  = Color(0xFF8B5CF6)
+        override val tint  = Color(0xFF1A6BF5)
         override val bg    = Color(0xFFEDE9FE)
     }
 }
@@ -688,12 +759,12 @@ fun buildNeedsAttention(
         )
     }
 
-    // High-priority todos (not yet started).
-    tasks.filter { it.priority == "High" && it.status == "Todo" }.forEach { t ->
+    // Danger-priority todos (not yet started).
+    tasks.filter { it.priority == "Danger" && it.status == "Todo" }.forEach { t ->
         val who = empById[t.userId.orEmpty()]?.name ?: "Unassigned"
         out += NeedsAttentionItem.HighPriorityTodo(
             title    = t.title,
-            subtitle = "High priority · $who",
+            subtitle = "Danger priority · $who",
             taskId   = t.id,
         )
     }
@@ -889,7 +960,7 @@ fun buildYourDay(
         dueToday            = tasks.count { it.status != "Done" && it.dueDate != null && it.dueDate!! in dayStart..dayEnd },
         absentToday         = absent.size,
         absentName          = absent.firstOrNull()?.name,
-        highPriorityPending = tasks.count { it.priority == "High" && it.status != "Done" },
+        highPriorityPending = tasks.count { it.priority == "Danger" && it.status != "Done" },
         lowStockCount       = spares.count { it.stockQty in 0..LOW_STOCK_THRESHOLD },
     )
 }

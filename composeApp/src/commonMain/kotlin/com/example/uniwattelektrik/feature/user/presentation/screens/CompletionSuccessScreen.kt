@@ -1,5 +1,7 @@
 package com.example.uniwattelektrik.feature.user.presentation.screens
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import androidx.compose.animation.core.EaseOutBack
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -47,22 +49,30 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.uniwattelektrik.core.theme.AppTheme
+import com.example.uniwattelektrik.core.theme.AppShapes
+// ─── Design tokens — backed by enterprise system ────────────────────────────
+private val ScreenBg     = AppTheme.Bg
+private val CardBg       = AppTheme.Surface
+private val InkPrimary   = AppTheme.Ink900
+private val InkSecondary = AppTheme.Ink500
+private val InkMuted     = AppTheme.Ink300
+private val Brand        = AppTheme.Brand
+private val BrandDeep    = AppTheme.Brand700
+private val Brand50      = AppTheme.Brand50
+private val Success      = AppTheme.Success
+private val SuccessBg    = AppTheme.SuccessBg
+private val Warning      = AppTheme.Warning
+private val WarningBg    = AppTheme.WarningBg
+private val Danger       = AppTheme.Danger
+private val DangerBg     = AppTheme.DangerBg
+private val DividerSoft  = AppTheme.Ink100
+private val ShadowSoft   = AppTheme.ShadowMd
+private val SuccessSoft  = AppTheme.SuccessBg
+private val SuccessDeep  = AppTheme.Success
+
 
 /* Local tokens (mirror CompleteWorkScreen) */
-private val ScreenBg     = Color(0xFFF4F7FB)
-private val CardBg       = Color(0xFFFFFFFF)
-private val InkPrimary   = Color(0xFF1A2B49)
-private val InkSecondary = Color(0xFF6B7A99)
-private val InkMuted     = Color(0xFF94A3B8)
-private val Brand        = Color(0xFF3B82F6)
-private val BrandDeep    = Color(0xFF1D4ED8)
-private val Success      = Color(0xFF22C55E)
-private val SuccessSoft  = Color(0xFFE8FBF1)
-private val SuccessDeep  = Color(0xFF15803D)
-private val Warning      = Color(0xFFF59E0B)
-private val Danger       = Color(0xFFEF4444)
-private val ShadowSoft   = Color(0x14172C50)
-private val DividerSoft  = Color(0xFFE5EAF2)
 
 @Composable
 fun CompletionSuccessScreen(
@@ -71,6 +81,7 @@ fun CompletionSuccessScreen(
     onShareReceipt: () -> Unit,
     onBackToDashboard: () -> Unit,
 ) {
+    TrackScreenPerformance("CompletionSuccessScreen")
     var loaded by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { loaded = true }
     val checkScale by animateFloatAsState(
@@ -102,7 +113,7 @@ fun CompletionSuccessScreen(
                         contentAlignment = Alignment.Center,
                     ) {
                         ConfettiDot(Color(0xFFFBBF24), x = (-110).dp, y = (-60).dp)
-                        ConfettiDot(Color(0xFF8B5CF6), x = 100.dp, y = (-72).dp)
+                        ConfettiDot(Color(0xFF1A6BF5), x = 100.dp, y = (-72).dp)
                         ConfettiDot(Color(0xFF3B82F6), x = 130.dp, y = 30.dp)
                         ConfettiDot(Color(0xFFEC4899), x = (-130).dp, y = 0.dp)
                         ConfettiDot(Color(0xFF22C55E), x = 140.dp, y = 70.dp)

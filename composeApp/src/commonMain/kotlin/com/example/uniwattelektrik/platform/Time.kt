@@ -20,6 +20,7 @@ fun currentTimeFormatted(): String {
     val now    = Instant.fromEpochMilliseconds(ms).toLocalDateTime(TimeZone.currentSystemDefault())
     val hour24 = now.hour
     val minute = now.minute
+    val second = now.second
     val hour12 = when {
         hour24 == 0  -> 12
         hour24 > 12  -> hour24 - 12
@@ -28,7 +29,8 @@ fun currentTimeFormatted(): String {
     val ampm = if (hour24 < 12) "AM" else "PM"
     val hh   = hour12.toString().padStart(2, '0')
     val mm   = minute.toString().padStart(2, '0')
-    return "$hh:$mm $ampm"
+    val ss   = second.toString().padStart(2, '0')
+    return "$hh:$mm:$ss $ampm"
 }
 
 @OptIn(ExperimentalTime::class)

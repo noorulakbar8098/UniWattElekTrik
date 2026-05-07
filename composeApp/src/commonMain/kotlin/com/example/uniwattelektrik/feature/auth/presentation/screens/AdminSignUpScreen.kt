@@ -1,5 +1,7 @@
 package com.example.uniwattelektrik.feature.auth.presentation.screens
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -41,6 +43,7 @@ fun AdminSignUpScreen(
     viewModel: AuthViewModel,
     onBack: () -> Unit,
 ) {
+    TrackScreenPerformance("AdminSignUpScreen")
     val state by viewModel.state.collectAsStateWithLifecycle()
     val fullName by viewModel.fullName.collectAsStateWithLifecycle()
     val email by viewModel.email.collectAsStateWithLifecycle()

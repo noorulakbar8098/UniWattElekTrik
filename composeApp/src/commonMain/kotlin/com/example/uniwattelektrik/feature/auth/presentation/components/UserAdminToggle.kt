@@ -22,14 +22,34 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.uniwattelektrik.core.theme.AppTheme
+import com.example.uniwattelektrik.core.theme.AppShapes
+// ─── Design tokens — backed by enterprise system ────────────────────────────
+private val ScreenBg     = AppTheme.Bg
+private val CardBg       = AppTheme.Surface
+private val InkPrimary   = AppTheme.Ink900
+private val InkSecondary = AppTheme.Ink500
+private val InkMuted     = AppTheme.Ink300
+private val Brand        = AppTheme.Brand
+private val BrandDeep    = AppTheme.Brand700
+private val Brand50      = AppTheme.Brand50
+private val Success      = AppTheme.Success
+private val SuccessBg    = AppTheme.SuccessBg
+private val Warning      = AppTheme.Warning
+private val WarningBg    = AppTheme.WarningBg
+private val Danger       = AppTheme.Danger
+private val DangerBg     = AppTheme.DangerBg
+private val DividerSoft  = AppTheme.Ink100
+private val ShadowSoft   = AppTheme.ShadowMd
+private val ContainerBg  = AppTheme.BgSecondary
+private val ActiveBg     = AppTheme.Surface
+private val ActiveText   = AppTheme.Ink900
+private val InactiveText = AppTheme.Ink300
+
 
 /** Two roles the auth UI can present. */
 enum class AuthRole { User, Admin }
 
-private val ContainerBg  = Color(0xFFECEFF5)
-private val ActiveBg     = Color(0xFFFFFFFF)
-private val ActiveText   = Color(0xFF0A1F44)
-private val InactiveText = Color(0xFF9AA3B5)
 
 /**
  * Figma-style segmented control — rectangular card shape, NOT a pill.

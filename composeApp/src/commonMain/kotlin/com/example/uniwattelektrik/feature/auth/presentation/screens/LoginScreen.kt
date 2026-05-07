@@ -1,5 +1,7 @@
 package com.example.uniwattelektrik.feature.auth.presentation.screens
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,6 +41,7 @@ fun LoginScreen(
     viewModel: AuthViewModel,
     onSwitchToAdmin: () -> Unit,
 ) {
+    TrackScreenPerformance("LoginScreen")
     val state by viewModel.state.collectAsStateWithLifecycle()
     val email by viewModel.email.collectAsStateWithLifecycle()
     val password by viewModel.password.collectAsStateWithLifecycle()

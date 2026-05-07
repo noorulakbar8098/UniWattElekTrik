@@ -1,5 +1,7 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens.inventory
 
+import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -74,6 +76,7 @@ fun PriceListScreen(
     onEdit: (SpareItem) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    TrackScreenPerformance("PriceListScreen")
     SetStatusBar(color = PremiumHeaderStatusBarColor, darkIcons = false)
 
     val departments = remember { sampleDepartments }
@@ -123,7 +126,7 @@ fun PriceListScreen(
             text    = { Text("\"${pi.name}\" will be permanently removed.", color = AppTheme.Ink500) },
             confirmButton = {
                 TextButton(onClick = { items.removeAll { it.id == pi.id }; deleteTarget = null }) {
-                    Text("Delete", color = AppTheme.High, fontWeight = FontWeight.SemiBold)
+                    Text("Delete", color = AppTheme.Danger, fontWeight = FontWeight.SemiBold)
                 }
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } },
@@ -249,7 +252,7 @@ private fun SpareItemCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(8.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowSpotSoft)
+            .shadow(8.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowSm)
             .clip(shape)
             .background(Color.White)
             .padding(20.dp),
@@ -261,13 +264,13 @@ private fun SpareItemCard(
                     modifier = Modifier
                         .size(48.dp)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(AppTheme.LowBg),
+                        .background(AppTheme.SuccessBg),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.PriceCheck,
                         contentDescription = null,
-                        tint = AppTheme.Low,
+                        tint = AppTheme.Success,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -287,7 +290,7 @@ private fun SpareItemCard(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     IconAction(icon = Icons.Outlined.Edit, tint = AppTheme.Brand, onClick = onEdit)
-                    IconAction(icon = Icons.Outlined.Delete, tint = AppTheme.High, onClick = onDelete)
+                    IconAction(icon = Icons.Outlined.Delete, tint = AppTheme.Danger, onClick = onDelete)
                 }
             }
 
@@ -316,7 +319,7 @@ private fun SpareItemCard(
                     Text("Unit Price", color = AppTheme.Ink300, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     Text(
                         text = "₹ ${item.price.toLong()}",
-                        color = AppTheme.Low, // Highlighted Green
+                        color = AppTheme.Success, // Highlighted Green
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -325,7 +328,7 @@ private fun SpareItemCard(
                     Text("Current Stock", color = AppTheme.Ink300, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     Text(
                         text = "${item.stockQty} units",
-                        color = if (item.stockQty < 20) AppTheme.High else AppTheme.Ink900,
+                        color = if (item.stockQty < 20) AppTheme.Danger else AppTheme.Ink900,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -380,7 +383,7 @@ private fun FilterChip(
             modifier = Modifier
                 .clip(shape)
                 .background(if (selected) AppTheme.Brand else Color.White)
-                .then(if (!selected) Modifier.shadow(2.dp, shape, spotColor = AppTheme.ShadowSpotSoft) else Modifier)
+                .then(if (!selected) Modifier.shadow(2.dp, shape, spotColor = AppTheme.ShadowSm) else Modifier)
                 .clickable(onClick = onExpand)
                 .padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,

@@ -10,11 +10,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -35,6 +39,14 @@ enum class SkeletonType {
     Dashboard,
     List,
     Form,
+    // Screen-specific types that match the actual UI layout
+    HomeAdmin,          // gradient header + 3 stat cards + recent task rows
+    EmployeeList,       // rows with avatar + 2 text lines
+    EmployeeDetail,     // profile header + stats row + tab bar + content cards
+    TaskKanban,         // 3 kanban column skeletons
+    AttendanceScreen,   // date pills + stat tiles + map placeholder + log rows
+    InventoryList,      // search bar + pill row + item rows
+    TaskDetail,         // header + stats card + section cards
 }
 
 /**
@@ -95,10 +107,17 @@ fun ScreenSkeletonOverlay(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             when (type) {
-                SkeletonType.Auth -> AuthSkeleton()
-                SkeletonType.Dashboard -> DashboardSkeleton()
-                SkeletonType.List -> ListSkeleton()
-                SkeletonType.Form -> FormSkeleton()
+                SkeletonType.Auth            -> AuthSkeleton()
+                SkeletonType.Dashboard       -> DashboardSkeleton()
+                SkeletonType.List            -> ListSkeleton()
+                SkeletonType.Form            -> FormSkeleton()
+                SkeletonType.HomeAdmin       -> HomeAdminSkeleton()
+                SkeletonType.EmployeeList    -> EmployeeListSkeleton()
+                SkeletonType.EmployeeDetail  -> EmployeeDetailSkeleton()
+                SkeletonType.TaskKanban      -> TaskKanbanSkeleton()
+                SkeletonType.AttendanceScreen-> AttendanceSkeleton()
+                SkeletonType.InventoryList   -> InventoryListSkeleton()
+                SkeletonType.TaskDetail      -> TaskDetailSkeleton()
             }
         }
 
@@ -178,5 +197,167 @@ private fun SkeletonBlock(modifier: Modifier = Modifier) {
             .background(Color(0xFFE2E8F0))
             .shimmerOverlay(),
     )
+}
+
+/* ── Screen-specific skeletons ─────────────────────────────────────────── */
+
+/** Admin home: gradient header placeholder → 3 stat tiles → recent task rows */
+@Composable
+private fun HomeAdminSkeleton() {
+    // Gradient header placeholder
+    SkeletonBlock(modifier = Modifier.fillMaxWidth().height(140.dp).clip(RoundedCornerShape(0.dp)))
+    Spacer(Modifier.height(12.dp))
+    // 3 stat tiles
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        repeat(3) { SkeletonBlock(modifier = Modifier.weight(1f).height(80.dp)) }
+    }
+    Spacer(Modifier.height(14.dp))
+    SkeletonBlock(modifier = Modifier.fillMaxWidth(0.4f).height(18.dp))
+    Spacer(Modifier.height(8.dp))
+    // Task rows
+    repeat(4) {
+        SkeletonBlock(modifier = Modifier.fillMaxWidth().height(72.dp))
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+/** Employee list: avatar + 2 text lines per row */
+@Composable
+private fun EmployeeListSkeleton() {
+    // Search bar
+    SkeletonBlock(modifier = Modifier.fillMaxWidth().height(48.dp))
+    Spacer(Modifier.height(12.dp))
+    repeat(6) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SkeletonBlock(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)))
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                SkeletonBlock(modifier = Modifier.fillMaxWidth(0.55f).height(14.dp))
+                SkeletonBlock(modifier = Modifier.fillMaxWidth(0.35f).height(11.dp))
+            }
+            SkeletonBlock(modifier = Modifier.width(52.dp).height(24.dp).clip(RoundedCornerShape(50.dp)))
+        }
+        Spacer(Modifier.height(14.dp))
+    }
+}
+
+/** Employee detail: header + stats row + tab bar + 2 content cards */
+@Composable
+private fun EmployeeDetailSkeleton() {
+    SkeletonBlock(modifier = Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(0.dp)))
+    Spacer(Modifier.height(12.dp))
+    // Stats row
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        repeat(4) { SkeletonBlock(modifier = Modifier.weight(1f).height(60.dp)) }
+    }
+    Spacer(Modifier.height(10.dp))
+    // Tab bar
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        repeat(4) { SkeletonBlock(modifier = Modifier.weight(1f).height(34.dp).clip(RoundedCornerShape(50.dp))) }
+    }
+    Spacer(Modifier.height(14.dp))
+    SkeletonBlock(modifier = Modifier.fillMaxWidth().height(100.dp))
+    Spacer(Modifier.height(10.dp))
+    SkeletonBlock(modifier = Modifier.fillMaxWidth().height(80.dp))
+}
+
+/** Task kanban: 3 column headers + 2-3 card stubs per column */
+@Composable
+private fun TaskKanbanSkeleton() {
+    SkeletonBlock(modifier = Modifier.fillMaxWidth(0.4f).height(18.dp))
+    Spacer(Modifier.height(12.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        repeat(3) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SkeletonBlock(modifier = Modifier.fillMaxWidth().height(28.dp).clip(RoundedCornerShape(50.dp)))
+                repeat(3) { SkeletonBlock(modifier = Modifier.fillMaxWidth().height(80.dp)) }
+            }
+        }
+    }
+}
+
+/** Attendance screen: date pills + stat tiles + map box + log rows */
+@Composable
+private fun AttendanceSkeleton() {
+    SkeletonBlock(modifier = Modifier.fillMaxWidth().height(120.dp).clip(RoundedCornerShape(0.dp)))
+    Spacer(Modifier.height(12.dp))
+    // Date pills row
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        repeat(4) {
+            SkeletonBlock(modifier = Modifier.width(80.dp).height(36.dp).clip(RoundedCornerShape(50.dp)))
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+    // Stat tiles
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        repeat(3) { SkeletonBlock(modifier = Modifier.weight(1f).height(70.dp)) }
+    }
+    Spacer(Modifier.height(12.dp))
+    // Map placeholder
+    SkeletonBlock(modifier = Modifier.fillMaxWidth().height(220.dp))
+    Spacer(Modifier.height(14.dp))
+    SkeletonBlock(modifier = Modifier.fillMaxWidth(0.35f).height(18.dp))
+    Spacer(Modifier.height(8.dp))
+    repeat(4) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SkeletonBlock(modifier = Modifier.size(46.dp).clip(RoundedCornerShape(14.dp)))
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                SkeletonBlock(modifier = Modifier.fillMaxWidth(0.5f).height(13.dp))
+                SkeletonBlock(modifier = Modifier.fillMaxWidth(0.7f).height(11.dp))
+            }
+            SkeletonBlock(modifier = Modifier.width(56.dp).height(24.dp).clip(RoundedCornerShape(50.dp)))
+        }
+        Spacer(Modifier.height(12.dp))
+    }
+}
+
+/** Inventory list: search bar + pill row + item rows */
+@Composable
+private fun InventoryListSkeleton() {
+    SkeletonBlock(modifier = Modifier.fillMaxWidth().height(48.dp))
+    Spacer(Modifier.height(10.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        repeat(4) {
+            SkeletonBlock(modifier = Modifier.width(72.dp).height(32.dp).clip(RoundedCornerShape(50.dp)))
+        }
+    }
+    Spacer(Modifier.height(14.dp))
+    repeat(5) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SkeletonBlock(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)))
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                SkeletonBlock(modifier = Modifier.fillMaxWidth(0.55f).height(13.dp))
+                SkeletonBlock(modifier = Modifier.fillMaxWidth(0.35f).height(10.dp))
+            }
+            SkeletonBlock(modifier = Modifier.width(60.dp).height(13.dp))
+        }
+        Spacer(Modifier.height(12.dp))
+    }
+}
+
+/** Task detail: header + stats card + 3 section cards */
+@Composable
+private fun TaskDetailSkeleton() {
+    SkeletonBlock(modifier = Modifier.fillMaxWidth().height(200.dp).clip(RoundedCornerShape(0.dp)))
+    Spacer(Modifier.height(12.dp))
+    // Stats card
+    SkeletonBlock(modifier = Modifier.fillMaxWidth().height(72.dp))
+    Spacer(Modifier.height(10.dp))
+    // Section cards
+    repeat(3) {
+        SkeletonBlock(modifier = Modifier.fillMaxWidth().height(90.dp))
+        Spacer(Modifier.height(10.dp))
+    }
 }
 

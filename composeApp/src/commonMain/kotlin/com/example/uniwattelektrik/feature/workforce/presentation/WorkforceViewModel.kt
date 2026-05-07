@@ -13,6 +13,7 @@ import com.example.uniwattelektrik.feature.workforce.data.remote.MaterialUsedIte
 import com.example.uniwattelektrik.feature.workforce.data.remote.SpareItemRecord
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskNote
+import com.example.uniwattelektrik.feature.workforce.data.remote.LeaveRecord
 import com.example.uniwattelektrik.feature.workforce.data.remote.WorkforceDirectory
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +40,24 @@ class WorkforceViewModel(
     private val employeeAuthClient: EmployeeAuthClient,
 ) : ViewModel() {
 
+    /** Keeps the last admin/user UID so resume-triggered refreshes can re-subscribe. */
+    private var cachedAdminUid: String? = null
+    private var cachedUserUid: String?  = null
+    private var cachedUserAdminUid: String? = null
+
+    /**
+     * Call on app resume (lifecycle ON_RESUME) to briefly show the shimmer
+     * and re-subscribe to Firestore, ensuring fresh data after the app was backgrounded.
+     */
+    fun refresh() {
+        val adminUid = cachedAdminUid
+        val userUid  = cachedUserUid
+        when {
+            adminUid != null -> loadForAdmin(adminUid)
+            userUid  != null -> loadForUser(userUid, cachedUserAdminUid)
+        }
+    }
+
     private val _employees = MutableStateFlow<List<EmployeeRecord>>(emptyList())
     val employees: StateFlow<List<EmployeeRecord>> = _employees.asStateFlow()
 
@@ -58,11 +77,34 @@ class WorkforceViewModel(
 
     private var spareItemsJob: Job? = null
 
+    private val _leaveRequests = MutableStateFlow<List<LeaveRecord>>(emptyList())
+    val leaveRequests: StateFlow<List<LeaveRecord>> = _leaveRequests.asStateFlow()
+
+    private var leaveRequestsJob: Job? = null
+
+    private val _notifications = MutableStateFlow<List<com.example.uniwattelektrik.feature.workforce.data.remote.NotificationRecord>>(emptyList())
+    val notifications: StateFlow<List<com.example.uniwattelektrik.feature.workforce.data.remote.NotificationRecord>> = _notifications.asStateFlow()
+
+    private var notificationsJob: Job? = null
+
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
+
+    /** Set an error and auto-clear it after 4 seconds so the banner doesn't stick. */
+    private fun setError(message: String?) {
+        _error.value = message
+        if (message != null) {
+            viewModelScope.launch {
+                kotlinx.coroutines.delay(4_000L)
+                if (_error.value == message) _error.value = null
+            }
+        }
+    }
+
+    fun clearError() { _error.value = null }
 
     // Track active subscriptions so a re-call cancels the previous listeners.
     private var employeesJob: Job? = null
@@ -71,11 +113,14 @@ class WorkforceViewModel(
     private var checkinsJob: Job? = null
 
     fun loadForAdmin(adminUid: String) {
+        cachedAdminUid  = adminUid
+        cachedUserUid   = null
         // Cancel any previous subscriptions before re-binding.
         employeesJob?.cancel()
         tasksJob?.cancel()
         attendanceJob?.cancel()
         spareItemsJob?.cancel()
+        leaveRequestsJob?.cancel()
         _error.value = null
         _loading.value = true
 
@@ -85,29 +130,34 @@ class WorkforceViewModel(
                 _loading.value = false
             }
             .catch {
-                _error.value = it.message
+                setError(it.message)
                 _loading.value = false
             }
             .launchIn(viewModelScope)
 
         tasksJob = directory.observeTasksForAdmin(adminUid)
             .onEach { _tasks.value = it }
-            .catch { _error.value = it.message }
+            .catch { setError(it.message) }
             .launchIn(viewModelScope)
 
         attendanceJob = directory.observeAttendance(adminUid)
             .onEach { _attendance.value = it }
-            .catch { _error.value = it.message }
+            .catch { setError(it.message) }
             .launchIn(viewModelScope)
 
         checkinsJob = directory.observeCheckins(adminUid)
             .onEach { _checkins.value = it }
-            .catch { _error.value = it.message }
+            .catch { setError(it.message) }
             .launchIn(viewModelScope)
 
         spareItemsJob = directory.observeSpareItems(adminUid)
             .onEach { _spareItems.value = it }
-            .catch { _error.value = it.message }
+            .catch { setError(it.message) }
+            .launchIn(viewModelScope)
+
+        leaveRequestsJob = directory.observeLeaveRequestsForAdmin(adminUid)
+            .onEach { _leaveRequests.value = it }
+            .catch { setError(it.message) }
             .launchIn(viewModelScope)
     }
 
@@ -118,10 +168,14 @@ class WorkforceViewModel(
      * collection the admin sees.
      */
     fun loadForUser(userUid: String, adminUid: String? = null) {
+        cachedUserUid      = userUid
+        cachedUserAdminUid = adminUid
+        cachedAdminUid     = null
         employeesJob?.cancel()
         tasksJob?.cancel()
         attendanceJob?.cancel()
         spareItemsJob?.cancel()
+        leaveRequestsJob?.cancel()
         _error.value = null
         _loading.value = true
 
@@ -131,7 +185,7 @@ class WorkforceViewModel(
                 _loading.value = false
             }
             .catch {
-                _error.value = it.message
+                setError(it.message)
                 _loading.value = false
             }
             .launchIn(viewModelScope)
@@ -139,17 +193,30 @@ class WorkforceViewModel(
         if (!adminUid.isNullOrBlank()) {
             attendanceJob = directory.observeAttendance(adminUid)
                 .onEach { _attendance.value = it }
-                .catch { _error.value = it.message }
+                .catch { setError(it.message) }
                 .launchIn(viewModelScope)
 
             employeesJob = directory.observeEmployees(adminUid)
                 .onEach { _employees.value = it }
-                .catch { _error.value = it.message }
+                .catch { setError(it.message) }
                 .launchIn(viewModelScope)
 
             spareItemsJob = directory.observeSpareItems(adminUid)
                 .onEach { _spareItems.value = it }
-                .catch { _error.value = it.message }
+                .catch { setError(it.message) }
+                .launchIn(viewModelScope)
+        }
+
+        leaveRequestsJob = directory.observeLeaveRequestsForUser(userUid)
+            .onEach { _leaveRequests.value = it }
+            .catch { setError(it.message) }
+            .launchIn(viewModelScope)
+
+        if (!adminUid.isNullOrBlank()) {
+            notificationsJob?.cancel()
+            notificationsJob = directory.observeNotifications(adminUid, userUid)
+                .onEach { _notifications.value = it.sortedByDescending { n -> n.createdAt ?: 0L } }
+                .catch { setError(it.message) }
                 .launchIn(viewModelScope)
         }
     }
@@ -177,7 +244,7 @@ class WorkforceViewModel(
             }
             result.onFailure {
                 AppLog.w("WorkforceVM", "markCheckIn failed: ${it.message}")
-                _error.value = it.message
+                setError(it.message)
             }
             onDone(result)
         }
@@ -212,7 +279,7 @@ class WorkforceViewModel(
             }
             result.onFailure {
                 AppLog.w("WorkforceVM", "markCheckOut failed: ${it.message}")
-                _error.value = it.message
+                setError(it.message)
             }
             onDone(result)
         }
@@ -254,7 +321,7 @@ class WorkforceViewModel(
                     val result = runCatching { directory.addEmployee(adminUid, uid, draft) }
                     result.onFailure {
                         AppLog.w("WorkforceVM", "addEmployee firestore failed: ${it.message}")
-                        _error.value = it.message
+                        setError(it.message)
                     }
                     _loading.value = false
                     onDone(result)
@@ -294,7 +361,7 @@ class WorkforceViewModel(
                     checklist, attachments, address, latitude, longitude,
                     dueDate, ownerAdminName, assigneeName,
                 )
-            }.onFailure { _error.value = it.message }
+            }.onFailure { setError(it.message) }
         }
     }
 
@@ -335,7 +402,18 @@ class WorkforceViewModel(
                     checklist, attachments, address, latitude, longitude,
                     dueDate, assigneeName,
                 )
-            }.onFailure { _error.value = it.message }
+            }.onFailure { setError(it.message) }
+        }
+    }
+
+    /** Update an employee's employment status (e.g. "Relieved", "active", "onleave"). */
+    fun updateEmployeeStatus(adminId: String, employeeId: String, status: String) {
+        viewModelScope.launch {
+            runCatching { directory.updateEmployeeStatus(adminId, employeeId, status) }
+                .onFailure {
+                    AppLog.w("WorkforceVM", "updateEmployeeStatus failed: ${it.message}")
+                    setError(it.message)
+                }
         }
     }
 
@@ -345,7 +423,18 @@ class WorkforceViewModel(
             runCatching { directory.acceptTask(taskId, lat, lon) }
                 .onFailure {
                     AppLog.w("WorkforceVM", "acceptTask failed: ${it.message}")
-                    _error.value = it.message
+                    setError(it.message)
+                }
+        }
+    }
+
+    /** Admin-facing: flip a task to any explicit workflow status without a full edit round-trip. */
+    fun changeTaskStatus(taskId: String, adminUid: String, userId: String?, newStatus: String) {
+        viewModelScope.launch {
+            runCatching { directory.updateTaskStatus(adminUid, taskId, userId, newStatus) }
+                .onFailure {
+                    AppLog.w("WorkforceVM", "changeTaskStatus failed: ${it.message}")
+                    setError(it.message)
                 }
         }
     }
@@ -356,7 +445,7 @@ class WorkforceViewModel(
             runCatching { directory.updateTaskStatus(adminUid, taskId, assignedUserId, "Done") }
                 .onFailure {
                     AppLog.w("WorkforceVM", "completeTask failed: ${it.message}")
-                    _error.value = it.message
+                    setError(it.message)
                 }
         }
     }
@@ -417,7 +506,7 @@ class WorkforceViewModel(
                 directory.addTaskNote(taskId, authorId, authorName, role, message.trim())
             }.onFailure {
                 AppLog.w("WorkforceVM", "addTaskNote failed: ${it.message}")
-                _error.value = it.message
+                setError(it.message)
             }
         }
     }
@@ -426,7 +515,7 @@ class WorkforceViewModel(
     fun toggleChecklistItem(taskId: String, index: Int, done: Boolean) {
         viewModelScope.launch {
             runCatching { directory.setChecklistItemDone(taskId, index, done) }
-                .onFailure { _error.value = it.message }
+                .onFailure { setError(it.message) }
         }
     }
 
@@ -444,7 +533,7 @@ class WorkforceViewModel(
             val result = runCatching { directory.uploadTaskAttachment(adminId, contentUri) }
             result.onFailure {
                 AppLog.w("WorkforceVM", "uploadAttachment failed: ${it.message}")
-                _error.value = it.message
+                setError(it.message)
             }
             onDone(result)
         }
@@ -454,11 +543,67 @@ class WorkforceViewModel(
     fun updateAttachments(taskId: String, urls: List<String>) {
         viewModelScope.launch {
             runCatching { directory.updateTaskAttachments(taskId, urls) }
-                .onFailure { _error.value = it.message }
+                .onFailure { setError(it.message) }
         }
     }
 
-    fun clearError() { _error.value = null }
+    // ─── Leave requests ──────────────────────────────────────────────────────
+
+    fun submitLeaveRequest(
+        adminId: String,
+        userId: String,
+        employeeName: String,
+        department: String,
+        leaveType: String,
+        fromDateMs: Long,
+        toDateMs: Long,
+        totalDays: Int,
+        reason: String,
+        onDone: (Result<LeaveRecord>) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            _loading.value = true
+            val result = runCatching {
+                directory.submitLeaveRequest(
+                    adminId, userId, employeeName, department,
+                    leaveType, fromDateMs, toDateMs, totalDays, reason,
+                )
+            }
+            result.onFailure {
+                AppLog.w("WorkforceVM", "submitLeaveRequest failed: ${it.message}")
+                setError(it.message)
+            }
+            _loading.value = false
+            onDone(result)
+        }
+    }
+
+    fun approveLeave(leaveId: String, adminId: String, userId: String) {
+        viewModelScope.launch {
+            runCatching { directory.updateLeaveStatus(leaveId, adminId, userId, "approved") }
+                .onFailure {
+                    AppLog.w("WorkforceVM", "approveLeave failed: ${it.message}")
+                    setError(it.message)
+                }
+        }
+    }
+
+    fun rejectLeave(
+        leaveId: String,
+        adminId: String,
+        userId: String,
+        rejectionReason: String = "",
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                directory.updateLeaveStatus(leaveId, adminId, userId, "rejected", rejectionReason)
+            }.onFailure {
+                AppLog.w("WorkforceVM", "rejectLeave failed: ${it.message}")
+                setError(it.message)
+            }
+        }
+    }
+
 
     // ─── Danger zone ─────────────────────────────────────────────────────────
 
@@ -475,6 +620,23 @@ class WorkforceViewModel(
     }
 
     fun clearDeleteAllState() { _deleteAllState.value = DeleteAllState.Idle }
+
+    // ── Notifications ──────────────────────────────────────────────────────────
+
+    fun markNotificationRead(notificationId: String) {
+        viewModelScope.launch {
+            runCatching { directory.markNotificationRead(notificationId) }
+        }
+    }
+
+    fun markAllNotificationsRead() {
+        val unread = _notifications.value.filter { !it.isRead }
+        unread.forEach { n ->
+            viewModelScope.launch {
+                runCatching { directory.markNotificationRead(n.id) }
+            }
+        }
+    }
 }
 
 sealed interface DeleteAllState {

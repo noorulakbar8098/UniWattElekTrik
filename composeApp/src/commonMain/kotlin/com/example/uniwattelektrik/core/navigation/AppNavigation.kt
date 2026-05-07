@@ -17,6 +17,7 @@ sealed interface UserRoute {
     data object Home              : Tab { override val tabKey = TabKey.Home }
     data object Tasks             : Tab { override val tabKey = TabKey.Tasks }
     data object Leave             : Tab { override val tabKey = TabKey.Leave }
+    data object LiveMap           : Tab { override val tabKey = TabKey.LiveMap }
     data object Profile           : Tab { override val tabKey = TabKey.Profile }
 
     /** Stack-pushed routes (no bottom nav highlight; back returns to previous). */
@@ -24,9 +25,8 @@ sealed interface UserRoute {
     data object Notifications                : UserRoute
     data class WorkCompletion(val taskId: String)  : UserRoute
     data object Attendance                   : UserRoute
-    data object LiveMap                      : UserRoute
 
-    enum class TabKey { Home, Tasks, Leave, Profile }
+    enum class TabKey { Home, Tasks, Leave, LiveMap, Profile }
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -60,6 +60,7 @@ sealed interface AdminRoute {
     data class  SpareItemForm(val item: com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItem? = null) : AdminRoute
     data class  SpareItemDetail(val item: com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItem) : AdminRoute
     data object ImportSpareItemsPreview : AdminRoute
+    data class  LeaveApprovals(val initialStatusFilter: String = "All") : AdminRoute
 
     enum class TabKey { Dashboard, Employees, Tasks, Attendance, Inventory, Profile }
 }

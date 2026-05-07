@@ -40,6 +40,9 @@ interface WorkforceDirectory {
     /** Flips `mustChangePassword → false` and syncs `employee_map`. */
     suspend fun markPasswordChanged(adminId: String, uid: String)
 
+    /** Updates an employee's employment status (e.g. "active", "Relieved", "onleave"). */
+    suspend fun updateEmployeeStatus(adminId: String, employeeId: String, status: String)
+
     /** Writes the FCM token. Pass "" to clear on logout. */
     suspend fun saveFcmToken(adminId: String, uid: String, token: String)
 
@@ -58,7 +61,7 @@ interface WorkforceDirectory {
         location: String,
         time: String,
         day: String,
-        priority: String,       // "Low" | "Medium" | "High"
+        priority: String,       // "Success" | "Medium" | "Danger"
         description: String = "",
         departmentId: String = "",
         departmentName: String = "",
@@ -308,6 +311,38 @@ interface WorkforceDirectory {
 
     suspend fun deleteEquipment(adminId: String, equipmentId: String)
 
+    // ─── Leave requests ────────────────────────────────────────────────────────
+
+    /** Live stream of all leave requests belonging to this admin's tenant. */
+    fun observeLeaveRequestsForAdmin(adminId: String): Flow<List<LeaveRecord>>
+
+    /** Live stream of leave requests submitted by a specific employee. */
+    fun observeLeaveRequestsForUser(userId: String): Flow<List<LeaveRecord>>
+
+    suspend fun submitLeaveRequest(
+        adminId: String,
+        userId: String,
+        employeeName: String,
+        department: String,
+        leaveType: String,    // "Casual" | "Sick" | "Earned"
+        fromDateMs: Long,
+        toDateMs: Long,
+        totalDays: Int,
+        reason: String,
+    ): LeaveRecord
+
+    /**
+     * Flip a request's status to "approved" or "rejected".
+     * Approved: also marks the employee as OnLeave in /users/{userId}.
+     */
+    suspend fun updateLeaveStatus(
+        leaveId: String,
+        adminId: String,
+        userId: String,
+        newStatus: String,            // "approved" | "rejected"
+        rejectionReason: String = "",
+    )
+
     // ─── Danger zone ──────────────────────────────────────────────────────────
 
     /**
@@ -380,7 +415,7 @@ data class TaskRecord(
     val location: String,
     val time: String,
     val day: String,
-    val priority: String,           // "Low" | "Medium" | "High"
+    val priority: String,           // "Success" | "Medium" | "Danger"
     val status: String,             // "Todo" | "InProgress" | "Done"
     val assigneeInitials: String = "",
     val assigneeName: String = "",
@@ -532,5 +567,22 @@ data class EquipmentRecord(
     val departmentId: String,
     val createdAt: Long? = null,
     val updatedAt: Long? = null,
+)
+
+data class LeaveRecord(
+    val id: String,
+    val userId: String,
+    val adminId: String,
+    val employeeName: String,
+    val department: String = "",
+    val leaveType: String,           // "Casual" | "Sick" | "Earned"
+    val fromDateMs: Long,            // epoch millis
+    val toDateMs: Long,              // epoch millis
+    val totalDays: Int,
+    val reason: String,
+    val status: String,              // "pending" | "approved" | "rejected"
+    val rejectionReason: String = "",
+    val createdAtMs: Long? = null,
+    val updatedAtMs: Long? = null,
 )
 
