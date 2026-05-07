@@ -72,6 +72,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.uniwattelektrik.core.theme.SetStatusBar
+import com.example.uniwattelektrik.feature.admin.presentation.InventoryViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 // ─── Design tokens — backed by enterprise system ────────────────────────────
 private val ScreenBg     = AppTheme.Bg
 private val CardBg       = AppTheme.Surface
@@ -101,13 +103,24 @@ fun SpareItemFormScreen(
     initial: SpareItem?,
     onBack: () -> Unit,
     onSave: (SpareItem) -> Unit,
+    inventoryVm: InventoryViewModel? = null,
     modifier: Modifier = Modifier,
 ) {
     TrackScreenPerformance("SpareItemFormScreen")
     SetStatusBar(color = Brand, darkIcons = false)
 
-    val departments = remember { sampleDepartments }
-    val allEquipment = remember { sampleEquipment }
+    // ── Live Firestore-backed taxonomy ─────────────────────────────────────
+    // When an [InventoryViewModel] is supplied we observe the admin's own
+    // departments/equipment collections. The seeded sample lists are kept
+    // only as a fallback for previews / unit-test compositions where no VM
+    // is wired in.
+    val deptsLive  by (inventoryVm?.departments?.collectAsStateWithLifecycle()
+        ?: remember { mutableStateOf(sampleDepartments) })
+    val equipLive  by (inventoryVm?.equipment?.collectAsStateWithLifecycle()
+        ?: remember { mutableStateOf(sampleEquipment) })
+
+    val departments  = deptsLive.ifEmpty { sampleDepartments }
+    val allEquipment = equipLive.ifEmpty { sampleEquipment }
 
     var name      by remember(initial) { mutableStateOf(initial?.name ?: "") }
     var make      by remember(initial) { mutableStateOf(initial?.make ?: "") }
@@ -130,6 +143,21 @@ fun SpareItemFormScreen(
     var selDept  by remember(initial) { mutableStateOf(departments.first()) }
     var selEquip by remember(initial) {
         mutableStateOf(allEquipment.firstOrNull { it.departmentId == selDept.id } ?: allEquipment.first())
+    }
+
+    // Reconcile selection when live taxonomy first arrives (or changes) so we
+    // never keep pointing to a stale sample object that doesn't exist in
+    // Firestore.
+    androidx.compose.runtime.LaunchedEffect(departments) {
+        if (departments.none { it.id == selDept.id }) {
+            selDept = departments.first()
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(allEquipment, selDept) {
+        val deptEquip = allEquipment.filter { it.departmentId == selDept.id }
+        if (deptEquip.none { it.id == selEquip.id }) {
+            selEquip = deptEquip.firstOrNull() ?: allEquipment.first()
+        }
     }
 
     val equipForDept = allEquipment.filter { it.departmentId == selDept.id }

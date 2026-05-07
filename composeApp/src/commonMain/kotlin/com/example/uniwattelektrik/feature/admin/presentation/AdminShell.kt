@@ -315,9 +315,10 @@ fun AdminShell(
                     },
                 )
                 is AdminRoute.SpareItemForm -> com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItemFormScreen(
-                    initial = r.item,
-                    onBack  = { nav.pop() },
-                    onSave  = { item ->
+                    initial     = r.item,
+                    onBack      = { nav.pop() },
+                    inventoryVm = inventoryVm,
+                    onSave      = { item ->
                         inventoryVm.saveSpareItem(user.id, item)
                         nav.pop()
                     }
