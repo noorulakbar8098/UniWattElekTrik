@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.uniwattelektrik.core.components.EmptyState
 import com.example.uniwattelektrik.core.sample.SampleTasks
+import com.example.uniwattelektrik.core.platform.rememberAttachmentLauncher
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskNote
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
@@ -156,6 +157,22 @@ fun TaskDetailScreen(
             .collectAsStateWithLifecycle())
     var newNote by remember { mutableStateOf("") }
     var descExpanded by remember { mutableStateOf(false) }
+    var isUploadingAttachment by remember { mutableStateOf(false) }
+
+    // Attachment picker — Gallery + Camera.
+    val attachmentLauncher = rememberAttachmentLauncher { uri ->
+        val current = live ?: return@rememberAttachmentLauncher
+        isUploadingAttachment = true
+        workforceVm?.uploadAttachment(
+            adminId    = adminUid.ifBlank { current.adminId },
+            contentUri = uri,
+        ) { result ->
+            isUploadingAttachment = false
+            result.onSuccess { newUrl ->
+                workforceVm.updateAttachments(current.id, current.attachments + newUrl)
+            }
+        }
+    }
 
     val scope = rememberCoroutineScope()
     val locationProvider = remember { LocationProvider() }
@@ -293,7 +310,7 @@ fun TaskDetailScreen(
             Spacer(Modifier.height(16.dp))
         }
 
-        // Attachments card
+        // Attachments card — supports picking from gallery or camera
         item {
             Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                 SectionCard(
@@ -301,16 +318,26 @@ fun TaskDetailScreen(
                     trailingAction = if (attachmentUrls.isEmpty()) null
                                      else "${attachmentUrls.size} ${if (attachmentUrls.size == 1) "file" else "files"}",
                 ) {
-                    if (attachmentUrls.isEmpty()) {
-                        Text(
-                            "No attachments yet.",
-                            color = InkSecondary, fontSize = 13.sp,
-                        )
-                    } else {
-                        AttachmentsGrid(
-                            urls = attachmentUrls,
-                            onClick = { fullscreenAttachment = it },
-                        )
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (attachmentUrls.isNotEmpty()) {
+                            AttachmentsGrid(
+                                urls    = attachmentUrls,
+                                onClick = { fullscreenAttachment = it },
+                            )
+                        } else if (!isUploadingAttachment) {
+                            Text(
+                                "No attachments yet.",
+                                color = InkSecondary, fontSize = 13.sp,
+                            )
+                        }
+                        // Add-attachment row (hidden when task is Done)
+                        if (workforceVm != null && live?.status != "Done") {
+                            AttachmentPickerRow(
+                                isUploading = isUploadingAttachment,
+                                onGallery   = { attachmentLauncher.launchGallery() },
+                                onCamera    = { attachmentLauncher.launchCamera() },
+                            )
+                        }
                     }
                 }
             }
@@ -1477,6 +1504,97 @@ private fun AttachmentsGrid(urls: List<String>, onClick: (String) -> Unit) {
                 repeat(3 - row.size) {
                     Box(modifier = Modifier.weight(1f).height(82.dp))
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Two-button row that lets the user pick a photo from gallery or take a new
+ * one with the camera. Shows a pulsing "Uploading…" strip while a file is
+ * in-flight so the user knows the app is working.
+ */
+@Composable
+private fun AttachmentPickerRow(
+    isUploading: Boolean,
+    onGallery: () -> Unit,
+    onCamera: () -> Unit,
+) {
+    if (isUploading) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Brand50)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Upload,
+                contentDescription = null,
+                tint = Brand,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(
+                "Uploading photo…",
+                color = Brand,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            // Gallery button
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Brand50)
+                    .clickable(onClick = onGallery)
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Image,
+                    contentDescription = null,
+                    tint = Brand,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    "Gallery",
+                    color = Brand,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            // Camera button
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(SuccessBg)
+                    .clickable(onClick = onCamera)
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = null,
+                    tint = Success,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    "Camera",
+                    color = Success,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
     }

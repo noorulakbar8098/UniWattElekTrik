@@ -406,6 +406,40 @@ class WorkforceViewModel(
         }
     }
 
+    /**
+     * Upload a new profile photo for [employeeId] to Firebase Storage and
+     * update the `photoUrl` field on their Firestore record.
+     * [contentUri] is a platform URI string from [rememberAttachmentLauncher].
+     * The Firestore snapshot listener will push the new [EmployeeRecord.photoUrl]
+     * to the UI automatically — no manual state update needed.
+     */
+    fun updateProfilePhoto(
+        adminId: String,
+        employeeId: String,
+        contentUri: String,
+        onDone: (Result<String>) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            val result = runCatching {
+                directory.updateEmployeePhoto(adminId, employeeId, contentUri)
+            }
+            result.onFailure {
+                AppLog.w("WorkforceVM", "updateProfilePhoto failed: ${it.message}")
+                setError(it.message)
+            }
+            onDone(result)
+        }
+    }
+
+    /** Update an employee's permission level ("" | "viewer" | "field" | "super"). */
+    fun updateEmployeePermission(adminId: String, employeeId: String, permission: String, onDone: () -> Unit = {}) {
+        viewModelScope.launch {
+            runCatching { directory.updateEmployeePermission(adminId, employeeId, permission) }
+                .onFailure { AppLog.w("WorkforceVM", "updatePermission failed: ${it.message}"); setError(it.message) }
+                .onSuccess { onDone() }
+        }
+    }
+
     /** Update an employee's employment status (e.g. "Relieved", "active", "onleave"). */
     fun updateEmployeeStatus(adminId: String, employeeId: String, status: String) {
         viewModelScope.launch {

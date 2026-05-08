@@ -42,6 +42,7 @@ import com.example.uniwattelektrik.core.navigation.AdminRoute
 import com.example.uniwattelektrik.core.navigation.rememberAdminNavigator
 import com.example.uniwattelektrik.di.AppContainer
 import com.example.uniwattelektrik.feature.admin.presentation.screens.AdminAttendanceScreen
+import com.example.uniwattelektrik.feature.admin.presentation.screens.LinkManagerScreen
 import com.example.uniwattelektrik.feature.admin.presentation.screens.AdminEmployeeDetailScreen
 import com.example.uniwattelektrik.feature.admin.presentation.screens.AdminEmployeesScreen
 import com.example.uniwattelektrik.feature.admin.presentation.screens.AdminHomeScreen
@@ -343,6 +344,11 @@ fun AdminShell(
                     adminUid            = user.id,
                     onBack              = { nav.pop() },
                     initialStatusFilter = r.initialStatusFilter,
+                )
+                AdminRoute.LinkManager -> LinkManagerScreen(
+                    adminId     = user.id,
+                    workforceVm = workforceVm,
+                    onBack      = { nav.pop() },
                 )
                 AdminRoute.Notifications -> NotificationsScreen(onBack = { nav.pop() })
                 AdminRoute.Financials -> EmptyState(

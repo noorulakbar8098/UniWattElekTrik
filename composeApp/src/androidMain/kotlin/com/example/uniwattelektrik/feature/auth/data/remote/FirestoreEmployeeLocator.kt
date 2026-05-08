@@ -22,8 +22,13 @@ internal class FirestoreEmployeeLocator(
                 return null
             }
             val mustChange = doc.getBoolean("mustChangePassword") ?: false
-            AppLog.i("EmpLocator", "  ↳ uid=$uid adminId=$adminId mustChangePassword=$mustChange")
-            EmployeeAccount(uid, adminId, mustChange)
+            // Read permission from users/{uid} (not stored in employee_map).
+            val permission = runCatching {
+                firestore.collection("users").document(uid).get().await()
+                    .getString("permission") ?: ""
+            }.getOrDefault("")
+            AppLog.i("EmpLocator", "  ↳ uid=$uid adminId=$adminId mustChangePwd=$mustChange permission=$permission")
+            EmployeeAccount(uid, adminId, mustChange, permission)
         } catch (e: Throwable) {
             AppLog.w("EmpLocator", "findByUid failed: ${e.message}")
             null

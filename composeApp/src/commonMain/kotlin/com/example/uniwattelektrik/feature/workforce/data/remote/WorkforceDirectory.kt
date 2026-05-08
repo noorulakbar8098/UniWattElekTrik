@@ -43,8 +43,23 @@ interface WorkforceDirectory {
     /** Updates an employee's employment status (e.g. "active", "Relieved", "onleave"). */
     suspend fun updateEmployeeStatus(adminId: String, employeeId: String, status: String)
 
+    /** Update the `permission` field for an employee ("" | "viewer" | "field" | "super"). */
+    suspend fun updateEmployeePermission(adminId: String, employeeId: String, permission: String)
+
     /** Writes the FCM token. Pass "" to clear on logout. */
     suspend fun saveFcmToken(adminId: String, uid: String, token: String)
+
+    /**
+     * Upload a new profile photo for an existing employee and update their
+     * `photoUrl` field in Firestore.  [contentUri] is a platform URI string
+     * (e.g. `content://…` on Android, `file://…` from camera cache).
+     * Returns the Firebase Storage public download URL.
+     */
+    suspend fun updateEmployeePhoto(
+        adminId: String,
+        employeeId: String,
+        contentUri: String,
+    ): String
 
     // ─── Tasks ───────────────────────────────────────────────────────────────
 

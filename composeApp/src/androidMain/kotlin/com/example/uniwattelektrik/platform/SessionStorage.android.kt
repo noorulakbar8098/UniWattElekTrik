@@ -29,6 +29,7 @@ actual class SessionStorage {
         adminId: String?,
         parentAdminId: String?,
         mustChangePassword: Boolean,
+        permission: String,
     ) = withContext(Dispatchers.IO) {
         prefs.edit()
             .putString(KEY_UID, uid)
@@ -37,6 +38,7 @@ actual class SessionStorage {
             .putString(KEY_ADMIN_ID, adminId)
             .putString(KEY_PARENT_ADMIN_ID, parentAdminId)
             .putBoolean(KEY_MUST_CHANGE_PWD, mustChangePassword)
+            .putString(KEY_PERMISSION, permission)
             .apply()
     }
 
@@ -50,6 +52,7 @@ actual class SessionStorage {
             adminId = prefs.getString(KEY_ADMIN_ID, null),
             parentAdminId = prefs.getString(KEY_PARENT_ADMIN_ID, null),
             mustChangePassword = prefs.getBoolean(KEY_MUST_CHANGE_PWD, false),
+            permission = prefs.getString(KEY_PERMISSION, "") ?: "",
         )
     }
 
@@ -62,6 +65,7 @@ actual class SessionStorage {
             .remove(KEY_ADMIN_ID)
             .remove(KEY_PARENT_ADMIN_ID)
             .remove(KEY_MUST_CHANGE_PWD)
+            .remove(KEY_PERMISSION)
             .apply()
     }
 
@@ -74,5 +78,6 @@ actual class SessionStorage {
         const val KEY_ADMIN_ID = "admin_id"
         const val KEY_PARENT_ADMIN_ID = "parent_admin_id"
         const val KEY_MUST_CHANGE_PWD = "must_change_pwd"
+        const val KEY_PERMISSION = "permission"
     }
 }

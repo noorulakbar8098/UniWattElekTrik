@@ -96,6 +96,7 @@ private class StubWorkforceDirectory : WorkforceDirectory {
     override suspend fun setChecklistItemDone(taskId: String, index: Int, done: Boolean) { /* no-op */ }
     override suspend fun uploadTaskAttachment(adminId: String, contentUri: String): String = ""
     override suspend fun updateTaskAttachments(taskId: String, urls: List<String>) { /* no-op */ }
+    override suspend fun updateEmployeePhoto(adminId: String, employeeId: String, contentUri: String): String = ""
 
     override fun observeInventory(adminId: String): Flow<List<InventoryRecord>> = flowOf(emptyList())
     override suspend fun addInventoryItem(
@@ -161,6 +162,7 @@ private class StubWorkforceDirectory : WorkforceDirectory {
     override suspend fun deleteEquipment(adminId: String, equipmentId: String) { /* no-op */ }
 
     override suspend fun deleteAllData(adminId: String) { /* no-op */ }
+    override suspend fun updateEmployeePermission(adminId: String, employeeId: String, permission: String) { /* no-op */ }
     override suspend fun updateEmployeeStatus(adminId: String, employeeId: String, status: String) { /* no-op */ }
 }
 

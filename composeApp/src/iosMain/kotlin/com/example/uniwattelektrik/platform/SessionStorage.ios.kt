@@ -23,6 +23,7 @@ actual class SessionStorage {
         adminId: String?,
         parentAdminId: String?,
         mustChangePassword: Boolean,
+        permission: String,
     ) {
         defaults.setObject(uid, KEY_UID)
         defaults.setObject(email, KEY_EMAIL)
@@ -30,6 +31,7 @@ actual class SessionStorage {
         defaults.setObject(adminId, KEY_ADMIN_ID)
         defaults.setObject(parentAdminId, KEY_PARENT_ADMIN_ID)
         defaults.setBool(mustChangePassword, KEY_MUST_CHANGE_PWD)
+        defaults.setObject(permission, KEY_PERMISSION)
     }
 
     actual suspend fun readProfile(): StoredProfile? {
@@ -42,6 +44,7 @@ actual class SessionStorage {
             adminId = defaults.stringForKey(KEY_ADMIN_ID),
             parentAdminId = defaults.stringForKey(KEY_PARENT_ADMIN_ID),
             mustChangePassword = defaults.boolForKey(KEY_MUST_CHANGE_PWD),
+            permission = defaults.stringForKey(KEY_PERMISSION) ?: "",
         )
     }
 
@@ -53,6 +56,7 @@ actual class SessionStorage {
         defaults.removeObjectForKey(KEY_ADMIN_ID)
         defaults.removeObjectForKey(KEY_PARENT_ADMIN_ID)
         defaults.removeObjectForKey(KEY_MUST_CHANGE_PWD)
+        defaults.removeObjectForKey(KEY_PERMISSION)
     }
 
     private companion object {
@@ -63,5 +67,6 @@ actual class SessionStorage {
         const val KEY_ADMIN_ID = "admin_id"
         const val KEY_PARENT_ADMIN_ID = "parent_admin_id"
         const val KEY_MUST_CHANGE_PWD = "must_change_pwd"
+        const val KEY_PERMISSION = "permission"
     }
 }

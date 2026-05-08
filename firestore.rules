@@ -29,6 +29,27 @@ service cloud.firestore {
     // Incoming-doc tenant ownership: caller is creating their own doc.
     function ownsIncoming()    { return isAuthed() && request.resource.data.adminId == request.auth.uid; }
 
+    // ── Cloudinary URL validators ────────────────────────────────────────────
+    // Ensures photoUrl is always a real Cloudinary URL (not a malicious link).
+    function isValidPhotoUrl(url) {
+      return url == ""
+          || url.matches("https://res\\.cloudinary\\.com/dcxjmlivz/.*");
+    }
+    // Checks incoming photoUrl on a write is valid.
+    function photoUrlIsValid() {
+      return !("photoUrl" in request.resource.data)
+          || isValidPhotoUrl(request.resource.data.photoUrl);
+    }
+
+    // ── Fields an employee may update on their OWN profile ───────────────────
+    // Prevents employees from changing their salary, role, adminId, etc.
+    function employeeSelfUpdateAllowed() {
+      return request.resource.data.diff(resource.data)
+        .affectedKeys()
+        .hasOnly(["photoUrl", "fcmToken", "mustChangePassword",
+                  "passwordChangedAt", "updatedAt"]);
+    }
+
     // ── Auth lookup tables ─────────────────────────────────────────────────
     match /employee_map/{userId} {
       allow read:  if isAuthed();
@@ -46,12 +67,19 @@ service cloud.firestore {
 
     // ── Employees (flat, tenant-isolated by adminId field) ─────────────────
     match /users/{userId} {
-      // Admin can manage all employees in their tenant.
-      allow create:         if ownsIncoming();
-      allow read, update,
-            delete, list:   if ownsExisting();
-      // Employee can read & update their own profile.
-      allow read, update:   if isAuthed() && request.auth.uid == userId;
+      // Admin — reads never touch request.resource so no photoUrlIsValid() here.
+      allow read, delete, list: if ownsExisting();
+      // Admin writes: validate photoUrl only on create / update (write ops).
+      allow create:             if ownsIncoming() && photoUrlIsValid();
+      allow update:             if ownsExisting() && photoUrlIsValid();
+
+      // Employee can always read their own profile.
+      allow read:               if isAuthed() && request.auth.uid == userId;
+      // Employee self-update: limited safe fields only + valid photo URL.
+      allow update:             if isAuthed()
+                                  && request.auth.uid == userId
+                                  && employeeSelfUpdateAllowed()
+                                  && photoUrlIsValid();
     }
 
     // ── Tasks ──────────────────────────────────────────────────────────────
@@ -59,7 +87,8 @@ service cloud.firestore {
       allow create:         if ownsIncoming();
       allow read, update,
             delete, list:   if ownsExisting();
-      // Assigned employee can read & update their own tasks.
+      // Assigned employee can read & update their own tasks
+      // (e.g. accept, checklist, add attachments, complete with signoff).
       allow read, update:   if isAuthed() && resource.data.assignedUserId == request.auth.uid;
 
       // ── Notes subcollection (chat between admin & assigned user) ─────────

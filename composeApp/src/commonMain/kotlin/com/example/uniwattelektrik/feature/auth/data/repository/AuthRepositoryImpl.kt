@@ -52,6 +52,7 @@ class AuthRepositoryImpl(
                     adminId = profile.adminId,
                     parentAdminId = profile.parentAdminId,
                     mustChangePassword = profile.mustChangePassword,
+                    permission = profile.permission,
                 ),
             )
         } else {
@@ -176,6 +177,7 @@ class AuthRepositoryImpl(
                         adminId = adminId,
                         parentAdminId = employeeAccount?.parentAdminId,
                         mustChangePassword = employeeAccount?.mustChangePassword ?: false,
+                        permission = employeeAccount?.permission ?: "",
                     ),
                 )
                 sessionStorage.saveProfile(
@@ -185,6 +187,7 @@ class AuthRepositoryImpl(
                     adminId = session.user.adminId,
                     parentAdminId = session.user.parentAdminId,
                     mustChangePassword = session.user.mustChangePassword,
+                    permission = session.user.permission,
                 )
                 AppLog.i("AuthRepo", "  ↳ profile persisted uid=${session.user.id} adminId=${session.user.adminId} parent=${session.user.parentAdminId}")
                 sessionFlow.value = session

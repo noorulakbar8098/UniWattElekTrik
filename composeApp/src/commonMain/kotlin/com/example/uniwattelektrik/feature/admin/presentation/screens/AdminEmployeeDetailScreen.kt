@@ -47,8 +47,11 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.layout.ContentScale
+import com.example.uniwattelektrik.core.platform.rememberAttachmentLauncher
 import androidx.compose.material3.Icon
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -201,6 +204,16 @@ fun AdminEmployeeDetailScreen(
 
     val rating = if (overallPct == 0) 0.0 else (overallPct / 20.0).coerceIn(0.0, 5.0)
 
+    // Photo picker — gallery only for profile pictures.
+    // The Firestore snapshot listener will push the updated photoUrl automatically.
+    val photoLauncher = rememberAttachmentLauncher { uri ->
+        workforceVm.updateProfilePhoto(
+            adminId    = adminUid,
+            employeeId = employee.id,
+            contentUri = uri,
+        )
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(appScreenBackground()),
@@ -210,8 +223,9 @@ fun AdminEmployeeDetailScreen(
         item {
             Box {
                 ProfileHeader(
-                    employee = employee,
-                    onBack   = onBack,
+                    employee    = employee,
+                    onBack      = onBack,
+                    onEditPhoto = { photoLauncher.launchGallery() },
                 )
                 Box(
                     modifier = Modifier
@@ -416,6 +430,7 @@ fun AdminEmployeeDetailScreen(
 private fun ProfileHeader(
     employee: EmployeeRecord,
     onBack: () -> Unit,
+    onEditPhoto: () -> Unit = {},
 ) {
     com.example.uniwattelektrik.core.components.PremiumHeaderBackground(
         roundedBottom = false,
@@ -472,20 +487,55 @@ private fun ProfileHeader(
                 /* Avatar with gradient + status dot */
                 Box(modifier = Modifier.size(108.dp)) {
                     val gradient = avatarGradientFor(employee.id)
+                    if (employee.photoUrl.isNotBlank()) {
+                        // Real profile photo from Firebase Storage
+                        coil3.compose.AsyncImage(
+                            model              = employee.photoUrl,
+                            contentDescription = employee.name,
+                            contentScale       = ContentScale.Crop,
+                            modifier           = Modifier
+                                .size(108.dp)
+                                .shadow(20.dp, RoundedCornerShape(28.dp),
+                                        spotColor = Color(0x55000000))
+                                .clip(RoundedCornerShape(28.dp)),
+                        )
+                    } else {
+                        // Gradient initials fallback
+                        Box(
+                            modifier = Modifier
+                                .size(108.dp)
+                                .shadow(20.dp, RoundedCornerShape(28.dp),
+                                        spotColor = Color(0x55000000))
+                                .clip(RoundedCornerShape(28.dp))
+                                .background(Brush.linearGradient(gradient)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                employee.name.take(2).uppercase().ifBlank { "??" },
+                                color = Color.White,
+                                fontSize = 32.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
+                    /* Camera button — bottom-start, tap to change photo */
                     Box(
                         modifier = Modifier
-                            .size(108.dp)
-                            .shadow(20.dp, RoundedCornerShape(28.dp),
-                                    spotColor = Color(0x55000000))
-                            .clip(RoundedCornerShape(28.dp))
-                            .background(Brush.linearGradient(gradient)),
+                            .size(28.dp)
+                            .align(Alignment.BottomStart)
+                            .offset(x = 2.dp, y = (-2).dp)
+                            .shadow(4.dp, CircleShape, spotColor = Color(0x44000000))
+                            .clip(CircleShape)
+                            .background(Brand)
+                            .border(2.dp, Color.White, CircleShape)
+                            .clickable(onClick = onEditPhoto),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(
-                            employee.name.take(2).uppercase().ifBlank { "??" },
-                            color = Color.White,
-                            fontSize = 32.sp,
-                            fontWeight = FontWeight.Bold,
+                        Icon(
+                            imageVector        = Icons.Filled.CameraAlt,
+                            contentDescription = "Change photo",
+                            tint               = Color.White,
+                            modifier           = Modifier.size(14.dp),
                         )
                     }
                     /* Online status — green dot bottom-right */

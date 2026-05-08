@@ -21,4 +21,12 @@ data class User(
      * button only succeeds while this flag is true.
      */
     val mustChangePassword: Boolean = false,
+    /**
+     * Elevated permission for employees. Values:
+     *   ""       — standard employee (UserShell)
+     *   "viewer" — read-only employee (UserShell)
+     *   "field"  — field employee (UserShell)
+     *   "super"  — Senior Manager: limited admin shell (Tasks + Inventory + Attendance)
+     */
+    val permission: String = "",
 )

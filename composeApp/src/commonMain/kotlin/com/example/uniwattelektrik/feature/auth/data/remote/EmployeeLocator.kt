@@ -20,5 +20,7 @@ data class EmployeeAccount(
     /** UID of the owning admin (= document ID at `admins/{parentAdminId}`). */
     val parentAdminId: String,
     val mustChangePassword: Boolean,
+    /** "viewer" | "field" | "super" | "" */
+    val permission: String = "",
 )
 

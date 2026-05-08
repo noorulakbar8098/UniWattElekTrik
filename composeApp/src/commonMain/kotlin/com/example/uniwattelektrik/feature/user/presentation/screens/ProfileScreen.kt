@@ -115,6 +115,8 @@ fun ProfileScreen(
     isAdmin: Boolean = true,
     workforceVm: WorkforceViewModel? = null,
     onNavigate: (AdminRoute) -> Unit = {},
+    /** True when rendered inside SeniorManagerShell — hides admin-only settings. */
+    isSeniorManager: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     TrackScreenPerformance("ProfileScreen")
@@ -479,6 +481,16 @@ fun ProfileScreen(
                         SettingsRow(Icons.Outlined.Shield,   "Security & PIN") { }
                         Divider()
                         SettingsRow(Icons.Outlined.Language, "Language & Region") { }
+                        // Link Manager — visible only to full admins (not senior managers)
+                        if (isAdmin && !isSeniorManager) {
+                            Divider()
+                            SettingsRow(
+                                icon  = Icons.Outlined.AdminPanelSettings,
+                                label = "Link Manager",
+                                tint  = Color(0xFF6C3CE1),
+                                onClick = { onNavigate(AdminRoute.LinkManager) },
+                            )
+                        }
                     }
                 }
             }
@@ -658,13 +670,19 @@ private fun ProfileInfoRow(icon: ImageVector, label: String, value: String, icon
 }
 
 @Composable
-private fun SettingsRow(icon: ImageVector, label: String, onClick: () -> Unit) {
+private fun SettingsRow(
+    icon: ImageVector,
+    label: String,
+    tint: Color = AppTheme.Ink700,
+    onClick: () -> Unit,
+) {
+    val iconBg = if (tint == AppTheme.Ink700) AppTheme.Ink50 else tint.copy(alpha = 0.12f)
     Row(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(modifier = Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(AppTheme.Ink50), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = AppTheme.Ink700, modifier = Modifier.size(18.dp))
+        Box(modifier = Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(iconBg), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp))
         }
         Spacer(Modifier.width(14.dp))
-        Text(label, color = AppTheme.Ink900, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        Text(label, color = if (tint == AppTheme.Ink700) AppTheme.Ink900 else tint, fontSize = 14.sp, fontWeight = if (tint == AppTheme.Ink700) FontWeight.Normal else FontWeight.SemiBold, modifier = Modifier.weight(1f))
         Text("›",   color = AppTheme.Ink300, fontSize = 18.sp)
     }
 }

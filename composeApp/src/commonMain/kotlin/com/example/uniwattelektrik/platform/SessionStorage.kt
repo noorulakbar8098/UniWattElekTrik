@@ -23,6 +23,7 @@ expect class SessionStorage() {
         adminId: String?,
         parentAdminId: String? = null,
         mustChangePassword: Boolean = false,
+        permission: String = "",
     )
 
     /** Returns null if no profile was ever saved (e.g. fresh install). */
@@ -38,4 +39,5 @@ data class StoredProfile(
     val adminId: String?,
     val parentAdminId: String? = null,
     val mustChangePassword: Boolean = false,
+    val permission: String = "",
 )

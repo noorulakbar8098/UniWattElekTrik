@@ -8,7 +8,12 @@
       "Bash(./gradlew :composeApp:compileDebugKotlin)",
       "Bash(./gradlew :composeApp:compileDebugKotlin --daemon -q)",
       "Bash(./gradlew :composeApp:compileDebugKotlin --daemon)",
-      "Bash(grep -n \"^        }$\\\\|^        }  \" /Users/noorul/AndroidStudioProjects/UniWattElekTrik/composeApp/src/commonMain/kotlin/com/example/uniwattelektrik/feature/admin/presentation/screens/AdminEmployeesScreen.kt)"
+      "Bash(grep -n \"^        }$\\\\|^        }  \" /Users/noorul/AndroidStudioProjects/UniWattElekTrik/composeApp/src/commonMain/kotlin/com/example/uniwattelektrik/feature/admin/presentation/screens/AdminEmployeesScreen.kt)",
+      "Bash(xargs ls *)",
+      "Bash(xargs cat *)",
+      "Bash(firebase deploy *)",
+      "Bash(grep -E \"\\\\.kt$\")",
+      "Bash(./gradlew :composeApp:assembleDebug)"
     ]
   }
 }

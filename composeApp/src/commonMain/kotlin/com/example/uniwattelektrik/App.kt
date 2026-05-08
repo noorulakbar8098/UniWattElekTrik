@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.uniwattelektrik.di.AppContainer
 import com.example.uniwattelektrik.feature.admin.presentation.AdminShell
+import com.example.uniwattelektrik.feature.admin.presentation.SeniorManagerShell
 import com.example.uniwattelektrik.feature.auth.presentation.screens.AdminLoginScreen
 import com.example.uniwattelektrik.feature.auth.presentation.screens.AdminSignUpScreen
 import com.example.uniwattelektrik.feature.auth.presentation.screens.LoginScreen
@@ -97,12 +98,17 @@ fun App() {
             Box(modifier = Modifier.fillMaxSize()) {
                 when (screenState) {
                     is AuthUiState.Verified -> {
-                        // Role split: admins see the AdminShell, employees see the UserShell.
-                        // `User.adminId` is non-null for admins (set during admin sign-up).
-                        if (screenState.user.adminId != null) {
-                            AdminShell(user = screenState.user, viewModel = viewModel)
-                        } else {
-                            UserShell(user = screenState.user, viewModel = viewModel)
+                        // Role split:
+                        //   adminId != null          → full AdminShell
+                        //   permission == "super"    → SeniorManagerShell (limited admin)
+                        //   else                     → UserShell (regular employee)
+                        when {
+                            screenState.user.adminId != null ->
+                                AdminShell(user = screenState.user, viewModel = viewModel)
+                            screenState.user.permission.lowercase() == "super" ->
+                                SeniorManagerShell(user = screenState.user, viewModel = viewModel)
+                            else ->
+                                UserShell(user = screenState.user, viewModel = viewModel)
                         }
                     }
                     else -> Box(

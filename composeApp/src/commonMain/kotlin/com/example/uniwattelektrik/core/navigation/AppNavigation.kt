@@ -61,9 +61,71 @@ sealed interface AdminRoute {
     data class  SpareItemDetail(val item: com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItem) : AdminRoute
     data object ImportSpareItemsPreview : AdminRoute
     data class  LeaveApprovals(val initialStatusFilter: String = "All") : AdminRoute
+    data object LinkManager        : AdminRoute
 
     enum class TabKey { Dashboard, Employees, Tasks, Attendance, Inventory, Profile }
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  SENIOR MANAGER routes  (permission == "super" employee)
+ *  Tabs: Tasks · Inventory · Attendance  (no Dashboard, no Employees, no More)
+ * ────────────────────────────────────────────────────────────────────────── */
+
+sealed interface SeniorManagerRoute {
+    sealed interface Tab : SeniorManagerRoute { val tabKey: TabKey }
+
+    data object Tasks       : Tab { override val tabKey = TabKey.Tasks }
+    data object Inventory   : Tab { override val tabKey = TabKey.Inventory }
+    data object Attendance  : Tab { override val tabKey = TabKey.Attendance }
+    data object Profile     : Tab { override val tabKey = TabKey.Profile }
+
+    data class  TaskDetail(val taskId: String) : SeniorManagerRoute
+    data class  NewTask(val editTaskId: String? = null) : SeniorManagerRoute
+    data object InventoryManagement  : SeniorManagerRoute
+    data object Departments          : SeniorManagerRoute
+    data object Equipment            : SeniorManagerRoute
+    data object SpareList            : SeniorManagerRoute
+    data class  SpareItemForm(val item: com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItem? = null) : SeniorManagerRoute
+    data class  SpareItemDetail(val item: com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItem) : SeniorManagerRoute
+    data object ImportSpareItemsPreview : SeniorManagerRoute
+
+    enum class TabKey { Tasks, Inventory, Attendance, Profile }
+}
+
+class SeniorManagerNavigator internal constructor() {
+    private val stack = mutableListOf<SeniorManagerRoute>(SeniorManagerRoute.Tasks)
+    var current by mutableStateOf<SeniorManagerRoute>(SeniorManagerRoute.Tasks)
+        private set
+
+    fun navigate(route: SeniorManagerRoute) {
+        stack += route
+        current = route
+    }
+
+    fun selectTab(tab: SeniorManagerRoute.Tab) {
+        stack.clear()
+        stack += tab
+        current = tab
+    }
+
+    fun pop(): Boolean {
+        if (stack.size <= 1) return false
+        stack.removeAt(stack.lastIndex)
+        current = stack.last()
+        return true
+    }
+
+    fun isForward(from: SeniorManagerRoute, to: SeniorManagerRoute): Boolean {
+        if (from is SeniorManagerRoute.Tab && to !is SeniorManagerRoute.Tab) return true
+        if (from is SeniorManagerRoute.Inventory && to is SeniorManagerRoute.InventoryManagement) return true
+        if (to is SeniorManagerRoute.SpareItemForm) return true
+        if (to is SeniorManagerRoute.SpareItemDetail) return true
+        if (to is SeniorManagerRoute.ImportSpareItemsPreview) return true
+        return false
+    }
+}
+
+@Composable fun rememberSeniorManagerNavigator(): SeniorManagerNavigator = remember { SeniorManagerNavigator() }
 
 /* ──────────────────────────────────────────────────────────────────────────
  *  Navigator state holders

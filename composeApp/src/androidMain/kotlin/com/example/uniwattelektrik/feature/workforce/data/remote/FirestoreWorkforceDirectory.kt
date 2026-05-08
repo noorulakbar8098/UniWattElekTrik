@@ -1,12 +1,12 @@
 package com.example.uniwattelektrik.feature.workforce.data.remote
 
 import com.example.uniwattelektrik.core.AppLog
+import com.example.uniwattelektrik.core.storage.CloudinaryUploader
+import com.google.firebase.FirebaseApp
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
-import com.google.firebase.storage.FirebaseStorage
-import android.net.Uri
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -76,8 +76,10 @@ private fun com.google.firebase.firestore.DocumentSnapshot.getMillis(field: Stri
  */
 class FirestoreWorkforceDirectory(
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance(),
-    private val storage:   FirebaseStorage   = FirebaseStorage.getInstance(),
 ) : WorkforceDirectory {
+
+    /** App context for ContentResolver — obtained without touching the constructor. */
+    private val appContext get() = FirebaseApp.getInstance().applicationContext
 
     // ─── Employees ───────────────────────────────────────────────────────────
 
@@ -228,6 +230,18 @@ class FirestoreWorkforceDirectory(
         }
     }
 
+    override suspend fun updateEmployeePermission(adminId: String, employeeId: String, permission: String) {
+        AppLog.i("PATH", "update $COL_USERS/$employeeId permission=$permission")
+        bounded {
+            firestore.collection(COL_USERS).document(employeeId)
+                .update(mapOf(
+                    "permission" to permission,
+                    "updatedAt"  to FieldValue.serverTimestamp(),
+                ))
+                .await()
+        }
+    }
+
     override suspend fun updateEmployeeStatus(adminId: String, employeeId: String, status: String) {
         AppLog.i("PATH", "update $COL_USERS/$employeeId status=$status")
         bounded {
@@ -250,17 +264,35 @@ class FirestoreWorkforceDirectory(
             .awaitBounded()
     }
 
+    /** Public override — replaces the employee's photo and updates Firestore. */
+    override suspend fun updateEmployeePhoto(
+        adminId: String,
+        employeeId: String,
+        contentUri: String,
+    ): String {
+        val url = uploadEmployeePhoto(adminId, employeeId, contentUri)
+        bounded {
+            firestore.collection(COL_USERS).document(employeeId)
+                .update(mapOf(
+                    "photoUrl"  to url,
+                    "updatedAt" to FieldValue.serverTimestamp(),
+                ))
+                .await()
+        }
+        AppLog.i("PATH", "updateEmployeePhoto $employeeId → $url")
+        return url
+    }
+
     private suspend fun uploadEmployeePhoto(
         adminId: String,
         userId: String,
         contentUri: String,
-    ): String {
-        val path = "employee-photos/$adminId/$userId.jpg"
-        AppLog.i("PATH", "upload $path  ← $contentUri")
-        val ref = storage.reference.child(path)
-        ref.putFile(Uri.parse(contentUri)).awaitBounded()
-        return ref.downloadUrl.awaitBounded().toString()
-    }
+    ): String = CloudinaryUploader.upload(
+        context    = appContext,
+        contentUri = contentUri,
+        folder     = "employee-photos/$adminId",
+        publicId   = userId,
+    )
 
     // ─── Tasks ───────────────────────────────────────────────────────────────
 
@@ -669,14 +701,13 @@ class FirestoreWorkforceDirectory(
         ).awaitBounded()
     }
 
-    override suspend fun uploadTaskAttachment(adminId: String, contentUri: String): String {
-        val fileName = "att_${System.currentTimeMillis()}.jpg"
-        val path = "task-attachments/$adminId/$fileName"
-        AppLog.i("PATH", "upload $path  ← $contentUri")
-        val ref = storage.reference.child(path)
-        ref.putFile(Uri.parse(contentUri)).awaitBounded()
-        return ref.downloadUrl.awaitBounded().toString()
-    }
+    override suspend fun uploadTaskAttachment(adminId: String, contentUri: String): String =
+        CloudinaryUploader.upload(
+            context    = appContext,
+            contentUri = contentUri,
+            folder     = "task-attachments/$adminId",
+            publicId   = "att_${System.currentTimeMillis()}",
+        )
 
     override suspend fun updateTaskAttachments(taskId: String, urls: List<String>) {
         AppLog.i("PATH", "update $COL_TASKS/$taskId attachments=${urls.size}")
