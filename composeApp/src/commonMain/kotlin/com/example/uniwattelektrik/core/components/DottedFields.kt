@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -25,17 +27,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -45,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.uniwattelektrik.core.theme.AppTheme
 import com.example.uniwattelektrik.core.theme.AppShapes
+import kotlinx.coroutines.launch
 // ─── Design tokens — backed by enterprise system ────────────────────────────
 private val ScreenBg     = AppTheme.Bg
 private val CardBg       = AppTheme.Surface
@@ -123,6 +130,11 @@ fun FieldLabel(
  * Editable text field with a leading colored icon tile and a dashed border.
  *
  * Mirrors the input style used across the Task-creation screen.
+ *
+ * Pass [semanticsLabel] (e.g. "email-address-field") so the platform autofill
+ * framework can target each field individually — without a unique anchor,
+ * accepting an autofill suggestion on one field can spill the same value
+ * into other fields rendered in the same form.
  */
 @Composable
 fun DottedField(
@@ -139,8 +151,17 @@ fun DottedField(
     minHeight: Dp = 48.dp,
     isError: Boolean = false,
     errorText: String? = null,
+    semanticsLabel: String? = null,
+    singleLine: Boolean = true,
 ) {
-    Column {
+    val bringIntoView = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
+    Column(
+        // Hoist the requester onto the wrapper Column so the whole field
+        // (label + input) is brought above the IME on focus, not just the
+        // BasicTextField bounding box.
+        modifier = Modifier.bringIntoViewRequester(bringIntoView),
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -180,6 +201,7 @@ fun DottedField(
                     value = value,
                     onValueChange = onChange,
                     enabled = enabled,
+                    singleLine = singleLine,
                     textStyle = TextStyle(
                         color = InkPrimary,
                         fontSize = 13.sp,
@@ -190,7 +212,23 @@ fun DottedField(
                         keyboardType = keyboard,
                         imeAction = imeAction,
                     ),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        // Stable per-field anchor so autofill / IME suggestion
+                        // bar targets only the focused field. Without this
+                        // every field shares the same generic node and an
+                        // accepted suggestion can spill across all of them.
+                        .then(
+                            if (semanticsLabel != null)
+                                Modifier.semantics { contentDescription = semanticsLabel }
+                            else Modifier,
+                        )
+                        // Scroll the field above the IME when it gets focus.
+                        .onFocusEvent { focus ->
+                            if (focus.isFocused) {
+                                scope.launch { bringIntoView.bringIntoView() }
+                            }
+                        },
                 )
             }
             if (trailing != null) {

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -908,17 +909,24 @@ fun FeedFilterChips(
                 )
                 if (count > 0) {
                     Spacer(Modifier.width(6.dp))
+                    val display = if (count > 99) "99+" else count.toString()
+                    // Round badge: equal min size + horizontal padding only widens
+                    // when display string exceeds a single character so single
+                    // digits render as a perfect circle.
+                    val extraH = if (display.length > 1) (display.length - 1) * 3 else 0
                     Box(
                         modifier = Modifier
+                            .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
                             .clip(CircleShape)
                             .background(
                                 if (isSelected) Color.White.copy(alpha = 0.20f)
                                 else Color(0xFFEEF2F7),
                             )
-                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                            .padding(horizontal = extraH.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            count.toString(),
+                            display,
                             color = if (isSelected) Color.White else Color(0xFF475569),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,

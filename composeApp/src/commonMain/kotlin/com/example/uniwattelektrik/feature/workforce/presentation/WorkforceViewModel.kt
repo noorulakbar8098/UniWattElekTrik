@@ -93,6 +93,38 @@ class WorkforceViewModel(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    /**
+     * Session-level optimistic check-in state. Lives in the ViewModel so it
+     * survives tab-switch navigation (Home → Tasks → Home), unlike `remember`
+     * state in a Composable which is destroyed when the composable leaves the
+     * composition tree.
+     *
+     *  - `null`  → no override; use the server-derived state from the attendance flow
+     *  - `true`  → user just tapped "On Duty" — show as checked-in immediately
+     *  - `false` → user just tapped "Off Duty" — show as checked-out immediately
+     *
+     * Auto-cleared by [clearSessionCheckInIfConfirmed] once the Firestore
+     * snapshot listener confirms the state (optimistic and server agree).
+     */
+    private val _sessionCheckIn = MutableStateFlow<Boolean?>(null)
+    val sessionCheckIn: StateFlow<Boolean?> = _sessionCheckIn.asStateFlow()
+
+    /** Called immediately when the user taps the toggle — before Firestore confirms. */
+    fun setSessionCheckIn(isCheckedIn: Boolean) {
+        _sessionCheckIn.value = isCheckedIn
+    }
+
+    /**
+     * Called from a [LaunchedEffect] watching [isCheckedInServer]. Once the
+     * server state matches the optimistic override, the override is cleared so
+     * the UI falls back to pure server-derived state going forward.
+     */
+    fun clearSessionCheckInIfConfirmed(serverState: Boolean) {
+        if (_sessionCheckIn.value == serverState) {
+            _sessionCheckIn.value = null
+        }
+    }
+
     /** Set an error and auto-clear it after 4 seconds so the banner doesn't stick. */
     private fun setError(message: String?) {
         _error.value = message
@@ -190,12 +222,17 @@ class WorkforceViewModel(
             }
             .launchIn(viewModelScope)
 
-        if (!adminUid.isNullOrBlank()) {
-            attendanceJob = directory.observeAttendance(adminUid)
-                .onEach { _attendance.value = it }
-                .catch { setError(it.message) }
-                .launchIn(viewModelScope)
+        // Employee attendance: query by userId (not adminId) so Firestore
+        // security rules allow the query. Querying by adminId returns ALL
+        // employees' records; Firestore rejects that for non-admin callers
+        // because some docs have a different userId — causing intermittent
+        // "permission denied" failures when logging in on a second device.
+        attendanceJob = directory.observeMyAttendance(userUid)
+            .onEach { _attendance.value = it }
+            .catch { setError(it.message) }
+            .launchIn(viewModelScope)
 
+        if (!adminUid.isNullOrBlank()) {
             employeesJob = directory.observeEmployees(adminUid)
                 .onEach { _employees.value = it }
                 .catch { setError(it.message) }
@@ -327,6 +364,30 @@ class WorkforceViewModel(
                     onDone(result)
                 }
             }
+        }
+    }
+
+    /**
+     * Update an existing employee. The Firebase Auth account is left
+     * untouched (email/password changes are out of scope here) — only the
+     * Firestore profile mirror is rewritten.
+     */
+    fun updateEmployee(
+        adminUid: String,
+        employeeId: String,
+        draft: EmployeeDraft,
+        onDone: (Result<EmployeeRecord>) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            _loading.value = true
+            _error.value = null
+            val result = runCatching { directory.updateEmployee(adminUid, employeeId, draft) }
+            result.onFailure {
+                AppLog.w("WorkforceVM", "updateEmployee firestore failed: ${it.message}")
+                setError(it.message)
+            }
+            _loading.value = false
+            onDone(result)
         }
     }
 

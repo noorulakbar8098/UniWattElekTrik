@@ -27,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.ui.Alignment
@@ -74,6 +75,10 @@ fun AdminShell(
     val workforceVm: WorkforceViewModel = remember { AppContainer.createWorkforceViewModel() }
     val inventoryVm: InventoryViewModel = remember { AppContainer.createInventoryViewModel() }
     val showAddEmployee = remember { mutableStateOf(false) }
+    // Holds per-route `rememberSaveable` state (scroll positions, search
+    // queries, etc.) across stack push/pop so users return to the same
+    // visual position they left.
+    val saveableHolder = rememberSaveableStateHolder()
     LaunchedEffect(user.id) { workforceVm.loadForAdmin(user.id) }
     // Start observing inventory live (admin adds data manually — no seeder).
     LaunchedEffect(user.id) {
@@ -205,6 +210,13 @@ fun AdminShell(
             },
             label = "ScreenTransition"
         ) { r ->
+            // Wrap each route in a SaveableStateProvider keyed by a stable
+            // string per route variant. This survives push→pop cycles so any
+            // `rememberSaveable` (LazyListState scroll position, search query,
+            // tab index, …) inside list screens is preserved when the user
+            // returns from a detail screen. ⇒ "back from detail lands me at
+            // the same row I tapped".
+            saveableHolder.SaveableStateProvider(routeKey(r)) {
             when (r) {
                 AdminRoute.Dashboard -> AdminHomeScreen(
                     user                = user,
@@ -217,6 +229,8 @@ fun AdminShell(
                     onSpareClick        = { item -> nav.navigate(AdminRoute.SpareItemDetail(item)) },
                     onLeaveRequestsClick = { nav.navigate(AdminRoute.LeaveApprovals()) },
                     onViewAllTasks      = { nav.selectTab(AdminRoute.Tasks) },
+                    onViewAllEmployees  = { nav.selectTab(AdminRoute.Employees) },
+                    onViewInventory     = { nav.selectTab(AdminRoute.Inventory) },
                 )
                 AdminRoute.Employees -> AdminEmployeesScreen(
                     adminUid        = user.id,
@@ -338,7 +352,38 @@ fun AdminShell(
                     workforceVm = workforceVm,
                     onBack      = { nav.pop() },
                     adminUid    = user.id,
+                    onEdit      = { id -> nav.navigate(AdminRoute.EditEmployee(id)) },
                 )
+                is AdminRoute.EditEmployee -> {
+                    val employees by workforceVm.employees.collectAsStateWithLifecycle()
+                    val initial = employees.firstOrNull { it.id == r.employeeId }
+                    val workforceLoading2 by workforceVm.loading.collectAsStateWithLifecycle()
+                    val workforceError2   by workforceVm.error.collectAsStateWithLifecycle()
+                    if (initial == null) {
+                        EmptyState(emoji = "👤", title = "Employee not found", body = "Go back and try again.")
+                    } else {
+                        com.example.uniwattelektrik.feature.admin.presentation.screens.AddEmployeeSheet(
+                            saving          = workforceLoading2,
+                            errorMsg        = workforceError2,
+                            createdName     = null,
+                            createdEmail    = null,
+                            createdPassword = null,
+                            createdPhone    = null,
+                            initial         = initial,
+                            onDoneSharing   = { nav.pop() },
+                            onCancel        = {
+                                workforceVm.clearError()
+                                nav.pop()
+                            },
+                            onSubmit        = { draft ->
+                                workforceVm.clearError()
+                                workforceVm.updateEmployee(user.id, r.employeeId, draft) { result ->
+                                    if (result.isSuccess) nav.pop()
+                                }
+                            },
+                        )
+                    }
+                }
                 is AdminRoute.LeaveApprovals -> AdminLeaveApprovalsScreen(
                     workforceVm         = workforceVm,
                     adminUid            = user.id,
@@ -356,6 +401,7 @@ fun AdminShell(
                     body  = "Financial reports are scaffolded — design system + nav are wired.",
                 )
             }
+            } // SaveableStateProvider
         }
 
         if (isTopLevel && !showAddEmployee.value) {
@@ -376,18 +422,22 @@ fun AdminShell(
             )
         }
 
-        // Dashboard handles its own below-header shimmer; skip full-screen overlay there.
-        if (workforceLoading && current != AdminRoute.Dashboard) {
+        // List/detail screens render their own inline skeletons BELOW their
+        // gradient header. Only show the dim full-screen overlay for routes
+        // that don't have a header of their own (forms / coming-soon stubs).
+        val showFullScreenOverlay = when (current) {
+            is AdminRoute.NewTask,
+            is AdminRoute.SpareItemForm,
+            AdminRoute.Financials,
+            AdminRoute.LinkManager,
+            AdminRoute.ImportSpareItemsPreview -> true
+            else -> false
+        }
+        if (workforceLoading && showFullScreenOverlay) {
             val skeletonType = when (current) {
-                AdminRoute.Employees          -> SkeletonType.EmployeeList
-                is AdminRoute.EmployeeDetail  -> SkeletonType.EmployeeDetail
-                AdminRoute.Tasks              -> SkeletonType.TaskKanban
-                AdminRoute.Attendance         -> SkeletonType.AttendanceScreen
-                AdminRoute.Inventory          -> SkeletonType.InventoryList
-                is AdminRoute.TaskDetail      -> SkeletonType.TaskDetail
                 is AdminRoute.NewTask,
-                is AdminRoute.SpareItemForm   -> SkeletonType.Form
-                else                          -> SkeletonType.List
+                is AdminRoute.SpareItemForm -> SkeletonType.Form
+                else                        -> SkeletonType.List
             }
             ScreenSkeletonOverlay(type = skeletonType, message = "Loading workspace...")
         }
@@ -406,3 +456,34 @@ private fun User.adminInitials(): String {
         .joinToString("")
         .ifEmpty { raw.take(2).uppercase() }
 }
+
+/**
+ * Stable string key per [AdminRoute] variant — used by the parent
+ * [androidx.compose.runtime.saveable.SaveableStateHolder] to bucket each
+ * route's `rememberSaveable` slots. Detail routes include the entity id so
+ * different items don't share state.
+ */
+private fun routeKey(r: AdminRoute): String = when (r) {
+    AdminRoute.Dashboard               -> "dashboard"
+    AdminRoute.Employees               -> "employees"
+    AdminRoute.Tasks                   -> "tasks"
+    AdminRoute.Attendance              -> "attendance"
+    AdminRoute.Inventory               -> "inventory"
+    AdminRoute.Profile                 -> "profile"
+    AdminRoute.Notifications           -> "notifications"
+    AdminRoute.Financials              -> "financials"
+    AdminRoute.InventoryManagement     -> "inv_mgmt"
+    AdminRoute.Departments             -> "departments"
+    AdminRoute.Equipment               -> "equipment"
+    AdminRoute.SpareList               -> "spare_list"
+    AdminRoute.ImportSpareItemsPreview -> "import_preview"
+    AdminRoute.LinkManager             -> "link_manager"
+    is AdminRoute.EmployeeDetail       -> "employee_detail:${r.employeeId}"
+    is AdminRoute.EditEmployee         -> "edit_employee:${r.employeeId}"
+    is AdminRoute.TaskDetail           -> "task_detail:${r.taskId}"
+    is AdminRoute.NewTask              -> "new_task:${r.editTaskId.orEmpty()}"
+    is AdminRoute.SpareItemDetail      -> "spare_detail:${r.item.id}"
+    is AdminRoute.SpareItemForm        -> "spare_form:${r.item?.id.orEmpty()}"
+    is AdminRoute.LeaveApprovals       -> "leave_approvals:${r.initialStatusFilter}"
+}
+

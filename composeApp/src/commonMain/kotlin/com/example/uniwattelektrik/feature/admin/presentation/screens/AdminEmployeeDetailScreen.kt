@@ -132,6 +132,7 @@ fun AdminEmployeeDetailScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     adminUid: String = "",
+    onEdit: (employeeId: String) -> Unit = {},
 ) {
     TrackScreenPerformance("AdminEmployeeDetailScreen")
     val employees  by workforceVm.employees.collectAsStateWithLifecycle()
@@ -223,9 +224,10 @@ fun AdminEmployeeDetailScreen(
         item {
             Box {
                 ProfileHeader(
-                    employee    = employee,
-                    onBack      = onBack,
-                    onEditPhoto = { photoLauncher.launchGallery() },
+                    employee       = employee,
+                    onBack         = onBack,
+                    onEditPhoto    = { photoLauncher.launchGallery() },
+                    onEditEmployee = { onEdit(employee.id) },
                 )
                 Box(
                     modifier = Modifier
@@ -431,6 +433,7 @@ private fun ProfileHeader(
     employee: EmployeeRecord,
     onBack: () -> Unit,
     onEditPhoto: () -> Unit = {},
+    onEditEmployee: () -> Unit = {},
 ) {
     com.example.uniwattelektrik.core.components.PremiumHeaderBackground(
         roundedBottom = false,
@@ -459,24 +462,6 @@ private fun ProfileHeader(
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(20.dp),
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                /* Edit button — solid white circle with brand-blue icon */
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .shadow(8.dp, RoundedCornerShape(14.dp), spotColor = Color(0x33000000))
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color.White)
-                        .clickable {},
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Edit,
-                        contentDescription = null,
-                        tint = Brand,
-                        modifier = Modifier.size(18.dp),
                     )
                 }
             }

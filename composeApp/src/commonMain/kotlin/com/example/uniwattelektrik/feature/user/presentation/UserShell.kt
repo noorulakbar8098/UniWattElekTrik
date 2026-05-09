@@ -24,6 +24,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -48,6 +49,7 @@ import com.example.uniwattelektrik.feature.user.presentation.screens.LiveMapScre
 import com.example.uniwattelektrik.feature.user.presentation.screens.NotificationsScreen
 import com.example.uniwattelektrik.feature.user.presentation.screens.ProfileScreen
 import com.example.uniwattelektrik.feature.user.presentation.screens.CompleteWorkScreen
+import com.example.uniwattelektrik.feature.user.presentation.screens.EmployeePersonalInfoScreen
 import com.example.uniwattelektrik.feature.user.presentation.screens.TaskDetailScreen
 import com.example.uniwattelektrik.feature.user.presentation.screens.TaskListScreen
 import com.example.uniwattelektrik.platform.PlatformBackHandler
@@ -63,6 +65,9 @@ fun UserShell(
 ) {
     val nav: UserNavigator = rememberUserNavigator()
     val workforceVm: WorkforceViewModel = remember { AppContainer.createWorkforceViewModel() }
+    // Per-route saveable state holder so list scroll positions, search
+    // queries, etc. survive push→pop navigation.
+    val saveableHolder = rememberSaveableStateHolder()
     LaunchedEffect(user.id, user.parentAdminId) {
         workforceVm.loadForUser(user.id, adminUid = user.parentAdminId)
     }
@@ -71,6 +76,12 @@ fun UserShell(
         workforceVm.refresh()
     }
     val workforceError  by workforceVm.error.collectAsStateWithLifecycle()
+    // Observe live employee record so the Profile screen can display the
+    // user's real role/title (e.g. "Substation Engineer · L1") that the
+    // admin saved in Firestore — never a hard-coded label.
+    val employees by workforceVm.employees.collectAsStateWithLifecycle()
+    val myRecord = remember(employees, user.id) { employees.firstOrNull { it.id == user.id } }
+    val liveRole = myRecord?.role?.takeIf { it.isNotBlank() } ?: "Employee"
 
     // ── Free, in-app notifications ───────────────────────────────────────────
     // Listens for new tasks assigned to this user + leave approval/rejection
@@ -136,7 +147,7 @@ fun UserShell(
 
         // ── Active screen ──────────────────────────────────────────────────
         when (val r = current) {
-            UserRoute.Home -> HomeScreen(
+            UserRoute.Home -> saveableHolder.SaveableStateProvider("home") { HomeScreen(
                 user      = user,
                 viewModel = viewModel,
                 workforceVm = workforceVm,
@@ -145,28 +156,29 @@ fun UserShell(
                 onNewLeave          = { nav.selectTab(UserRoute.Leave) },
                 onViewMap           = { nav.selectTab(UserRoute.LiveMap) },
                 onTaskDetail        = { id -> nav.navigate(UserRoute.TaskDetail(id)) },
-            )
-            UserRoute.Tasks -> TaskListScreen(
+            ) }
+            UserRoute.Tasks -> saveableHolder.SaveableStateProvider("tasks") { TaskListScreen(
                 onTaskClick = { id -> nav.navigate(UserRoute.TaskDetail(id)) },
                 workforceVm = workforceVm,
-            )
-            UserRoute.Leave -> LeaveScreen(
+            ) }
+            UserRoute.Leave -> saveableHolder.SaveableStateProvider("leave") { LeaveScreen(
                 workforceVm  = workforceVm,
                 userId       = user.id,
                 adminId      = user.parentAdminId ?: "",
                 employeeName = user.displayName?.takeIf { it.isNotBlank() } ?: user.email,
                 department   = "",
-            )
-            UserRoute.Profile -> ProfileScreen(
-                user        = user,
-                initials    = user.initialsForAvatar(),
-                name        = user.displayName?.takeIf { it.isNotBlank() } ?: user.email,
-                role        = "Substation Engineer · L2",
-                onLogout    = { viewModel.onEvent(com.example.uniwattelektrik.feature.auth.presentation.state.AuthUiEvent.Logout) },
-                isAdmin     = false,
-                workforceVm = workforceVm,
-            )
-            is UserRoute.TaskDetail -> TaskDetailScreen(
+            ) }
+            UserRoute.Profile -> saveableHolder.SaveableStateProvider("profile") { ProfileScreen(
+                user            = user,
+                initials        = user.initialsForAvatar(),
+                name            = user.displayName?.takeIf { it.isNotBlank() } ?: user.email,
+                role            = liveRole,
+                onLogout        = { viewModel.onEvent(com.example.uniwattelektrik.feature.auth.presentation.state.AuthUiEvent.Logout) },
+                isAdmin         = false,
+                workforceVm     = workforceVm,
+                onPersonalInfo  = { nav.navigate(UserRoute.PersonalInfo) },
+            ) }
+            is UserRoute.TaskDetail -> saveableHolder.SaveableStateProvider("task_detail:${r.taskId}") { TaskDetailScreen(
                 taskId      = r.taskId,
                 onBack      = { nav.pop() },
                 onStartWork = { id -> nav.navigate(UserRoute.WorkCompletion(id)) },
@@ -175,30 +187,37 @@ fun UserShell(
                 currentUserId   = user.id,
                 currentUserName = user.displayName?.takeIf { it.isNotBlank() } ?: user.email,
                 adminUid        = user.parentAdminId ?: "",
-            )
-            is UserRoute.WorkCompletion -> CompleteWorkScreen(
+            ) }
+            is UserRoute.WorkCompletion -> saveableHolder.SaveableStateProvider("work_completion:${r.taskId}") { CompleteWorkScreen(
                 taskId      = r.taskId,
                 adminId     = user.parentAdminId ?: "",
                 userId      = user.id,
                 workforceVm = workforceVm,
                 onClose     = { nav.pop() },
                 onSubmitted = { nav.selectTab(UserRoute.Home) },
-            )
-            UserRoute.Notifications -> NotificationsScreen(
+            ) }
+            UserRoute.Notifications -> saveableHolder.SaveableStateProvider("notifications") { NotificationsScreen(
                 onBack      = { nav.pop() },
                 workforceVm = workforceVm,
                 userId      = user.id,
                 adminId     = user.parentAdminId ?: "",
-            )
+            ) }
             UserRoute.Attendance -> com.example.uniwattelektrik.core.components.EmptyState(
                 emoji = "🚧",
                 title = "Coming next",
                 body  = "This screen is scaffolded — the design system + navigation are wired so we can drop the implementation in.",
             )
-            UserRoute.LiveMap -> LiveMapScreen(
+            UserRoute.PersonalInfo -> saveableHolder.SaveableStateProvider("personal_info") {
+                EmployeePersonalInfoScreen(
+                    user        = user,
+                    workforceVm = workforceVm,
+                    onBack      = { nav.pop() },
+                )
+            }
+            UserRoute.LiveMap -> saveableHolder.SaveableStateProvider("livemap") { LiveMapScreen(
                 workforceVm = workforceVm,
                 userId      = user.id,
-            )
+            ) }
         }
 
         // ── Bottom nav (only on top-level tabs) ────────────────────────────

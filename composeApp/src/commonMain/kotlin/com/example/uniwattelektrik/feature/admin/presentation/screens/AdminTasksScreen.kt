@@ -221,6 +221,7 @@ fun AdminTasksScreen(
 ) {
     TrackScreenPerformance("AdminTasksScreen")
     val allTasks by workforceVm.tasks.collectAsStateWithLifecycle()
+    val tasksLoading by workforceVm.loading.collectAsStateWithLifecycle()
 
     // ─── Search / sort / filter state ───────────────────────────────────────
     var query             by remember { mutableStateOf("") }
@@ -297,6 +298,12 @@ fun AdminTasksScreen(
             )
 
             // Paged content
+            if (tasksLoading && allTasks.isEmpty()) {
+                com.example.uniwattelektrik.core.components.InlineSkeleton(
+                    type = com.example.uniwattelektrik.core.components.SkeletonType.TaskKanban,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
             HorizontalPager(
                 state    = pagerState,
                 modifier = Modifier.weight(1f),
@@ -318,6 +325,7 @@ fun AdminTasksScreen(
                         workforceVm.changeTaskStatus(task.id, adminUid, task.userId, status)
                     },
                 )
+            }
             }
         }
 

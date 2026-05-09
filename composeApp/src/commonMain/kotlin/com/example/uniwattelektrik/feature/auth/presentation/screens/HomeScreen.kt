@@ -192,6 +192,21 @@ fun HomeScreen(
         }
     }
 
+    // Apply live Firestore role/title (e.g. "Substation Engineer · L1") onto
+    // the profile pill — never trust the seeded default once the directory
+    // stream has emitted at least once.
+    val liveEmployees by (workforceVm?.employees?.collectAsStateWithLifecycle()
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<
+                com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeRecord>()) }
+            .collectAsStateWithLifecycle())
+    LaunchedEffect(liveEmployees, user.id) {
+        val me = liveEmployees.firstOrNull { it.id == user.id } ?: return@LaunchedEffect
+        val title = me.role.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        if (state.profile.role != title) {
+            state = state.copy(profile = state.profile.copy(name = me.name.ifBlank { state.profile.name }, role = title))
+        }
+    }
+
     val locationProvider = remember { LocationProvider() }
     val scope            = rememberCoroutineScope()
 
@@ -223,11 +238,16 @@ fun HomeScreen(
     // optimistic override keeps the slider feeling instant on tap until the
     // snapshot listener catches up; it auto-clears once server agrees.
     val isCheckedInServer = openAttendanceId != null
-    var optimisticToggle by remember { mutableStateOf<Boolean?>(null) }
-    LaunchedEffect(isCheckedInServer, optimisticToggle) {
-        if (optimisticToggle == isCheckedInServer) optimisticToggle = null
+    // Optimistic override lives in the ViewModel (not local `remember`) so it
+    // survives navigating away from Home and coming back within the same session.
+    val sessionCheckIn by (workforceVm?.sessionCheckIn?.collectAsStateWithLifecycle()
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow<Boolean?>(null) }
+            .collectAsStateWithLifecycle())
+    // Once Firestore confirms the state, clear the optimistic override.
+    LaunchedEffect(isCheckedInServer) {
+        workforceVm?.clearSessionCheckInIfConfirmed(isCheckedInServer)
     }
-    val isCheckedIn = optimisticToggle ?: isCheckedInServer
+    val isCheckedIn = sessionCheckIn ?: isCheckedInServer
 
     // Resolve this employee's shift from the employees flow.
     val employees by (workforceVm?.employees?.collectAsStateWithLifecycle()
@@ -308,9 +328,9 @@ fun HomeScreen(
         state       = renderState,
         onCheckInToggle = { newCheckedIn ->
             // Capture the moment-of-toggle: time is "now", location is freshly fetched.
-            // Optimistic toggle override flips the slider instantly; it auto-clears
-            // once the Firestore snapshot listener confirms the server state.
-            optimisticToggle = newCheckedIn
+            // Optimistic override is stored in the ViewModel so it survives navigation
+            // (stays correct when user goes Home → Tasks → Home within the same session).
+            workforceVm?.setSessionCheckIn(newCheckedIn)
             val nowTime = currentTimeFormatted()
             state = state.copy(
                 checkIn = state.checkIn.copy(
@@ -1107,7 +1127,7 @@ private fun defaultHomeState(user: User): HomeUiState {
             initials       = initials,
             greeting       = "Good morning,",
             name           = cleanName,
-            role           = "Substation Engineer · L2",
+            role           = "Engineer",
             avatarGradient = listOf(Color(0xFFFFB28A), Color(0xFFEC8552)),
         ),
         checkIn = CheckInState(

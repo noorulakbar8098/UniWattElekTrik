@@ -137,6 +137,39 @@ fun ScreenSkeletonOverlay(
     }
 }
 
+/**
+ * Inline skeleton — same shimmer blocks as [ScreenSkeletonOverlay] but
+ * **without** the dim white scrim or the centred spinner. Use this when the
+ * caller wants the skeleton to appear BELOW a sticky gradient header, so the
+ * page chrome stays visible during the initial fetch.
+ */
+@Composable
+fun InlineSkeleton(
+    type: SkeletonType = SkeletonType.List,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        when (type) {
+            SkeletonType.Auth             -> AuthSkeleton()
+            SkeletonType.Dashboard        -> DashboardSkeleton()
+            SkeletonType.List             -> ListSkeleton()
+            SkeletonType.Form             -> FormSkeleton()
+            SkeletonType.HomeAdmin        -> HomeAdminSkeleton()
+            SkeletonType.EmployeeList     -> EmployeeListSkeleton()
+            SkeletonType.EmployeeDetail   -> EmployeeDetailSkeleton()
+            SkeletonType.TaskKanban       -> TaskKanbanSkeleton()
+            SkeletonType.AttendanceScreen -> AttendanceSkeleton()
+            SkeletonType.InventoryList    -> InventoryListSkeleton()
+            SkeletonType.TaskDetail       -> TaskDetailSkeleton()
+        }
+    }
+}
+
 @Composable
 private fun AuthSkeleton() {
     SkeletonBlock(modifier = Modifier.fillMaxWidth(0.45f).height(18.dp))

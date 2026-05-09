@@ -13,7 +13,9 @@
       "Bash(xargs cat *)",
       "Bash(firebase deploy *)",
       "Bash(grep -E \"\\\\.kt$\")",
-      "Bash(./gradlew :composeApp:assembleDebug)"
+      "Bash(./gradlew :composeApp:assembleDebug)",
+      "Bash(./gradlew :composeApp:compileDebugKotlinAndroid)",
+      "Bash(./gradlew :composeApp:compileKotlinAndroid)"
     ]
   }
 }

@@ -79,6 +79,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -117,6 +118,8 @@ fun ProfileScreen(
     onNavigate: (AdminRoute) -> Unit = {},
     /** True when rendered inside SeniorManagerShell — hides admin-only settings. */
     isSeniorManager: Boolean = false,
+    /** Called when the employee taps "Personal Information" in Settings (user mode only). */
+    onPersonalInfo: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     TrackScreenPerformance("ProfileScreen")
@@ -357,97 +360,56 @@ fun ProfileScreen(
             }
         }
 
-        // 5b. PROFILE INFORMATION (user only)
+        // 5b. "View full profile" shortcut card (user only)
+        // Detailed fields live in EmployeePersonalInfoScreen — reachable from
+        // Settings → Personal Information, or via the shortcut card below.
         if (!isAdmin) {
             item {
                 Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
-                    SectionLabel("PROFILE INFORMATION")
+                    SectionLabel("MY INFORMATION")
                     Spacer(Modifier.height(10.dp))
                     AppCard(cornerRadius = 20.dp, contentPadding = 0.dp) {
-                        Column {
-                            ProfileInfoRow(Icons.Outlined.Person,        "Full Name", employeeRecord?.name?.takeIf { it.isNotBlank() } ?: name,       AppTheme.Brand50,   AppTheme.Brand)
-                            Divider()
-                            ProfileInfoRow(Icons.Outlined.Email,         "Email",     employeeRecord?.email?.takeIf { it.isNotBlank() } ?: user.email, AppTheme.Brand50,   AppTheme.Brand)
-                            Divider()
-                            ProfileInfoRow(Icons.Outlined.Phone,         "Phone",     employeeRecord?.phone?.takeIf { it.isNotBlank() } ?: "—",        AppTheme.SuccessBg, AppTheme.Success)
-                            Divider()
-                            ProfileInfoRow(Icons.Outlined.Badge,         "Role",      employeeRecord?.role?.takeIf { it.isNotBlank() } ?: role,         AppTheme.Brand100,  AppTheme.Brand700)
-                            Divider()
-                            ProfileInfoRow(Icons.Outlined.Person,        "Gender",    employeeRecord?.gender?.takeIf { it.isNotBlank() } ?: "—",       Color(0xFFF0F0FF),  AppTheme.Brand)
-                        }
-                    }
-
-                    Spacer(Modifier.height(12.dp))
-                    SectionLabel("WORK DETAILS")
-                    Spacer(Modifier.height(10.dp))
-                    AppCard(cornerRadius = 20.dp, contentPadding = 0.dp) {
-                        Column {
-                            ProfileInfoRow(Icons.Outlined.Work,              "Employment Type", employeeRecord?.employmentType?.takeIf { it.isNotBlank() } ?: "—", AppTheme.Brand50,   AppTheme.Brand)
-                            Divider()
-                            ProfileInfoRow(Icons.Outlined.Group,             "Department",      employeeRecord?.department?.takeIf { it.isNotBlank() } ?: "—",     AppTheme.SuccessBg, AppTheme.Success)
-                            Divider()
-                            ProfileInfoRow(Icons.Outlined.LocationOn,        "Zone",            employeeRecord?.zone?.takeIf { it.isNotBlank() } ?: "—",           AppTheme.WarningBg, AppTheme.Warning)
-                            Divider()
-                            ProfileInfoRow(Icons.Outlined.SupervisorAccount, "Reporting To",    employeeRecord?.reportingTo?.takeIf { it.isNotBlank() } ?: "—",    Color(0xFFF0F0FF),  AppTheme.Brand)
-                            Divider()
-                            ProfileInfoRow(Icons.Outlined.Schedule,          "Shift",           when (employeeRecord?.shift) { "Shift1" -> "Shift 1  (09:00 – 18:00)"; "Shift2" -> "Shift 2  (13:00 – 23:00)"; else -> employeeRecord?.shift?.takeIf { it.isNotBlank() } ?: "—" }, AppTheme.Brand50, AppTheme.Brand)
-                            Divider()
-                            ProfileInfoRow(Icons.Outlined.CalendarMonth,     "Joining Date",    employeeRecord?.joiningDateMs?.let { formatDateMs(it) } ?: "—",    AppTheme.SuccessBg, AppTheme.Success)
-                            Divider()
-                            ProfileInfoRow(Icons.Outlined.Cake,              "Date of Birth",   employeeRecord?.dateOfBirthMs?.let { formatDateMs(it) } ?: "—",    AppTheme.WarningBg, AppTheme.Warning)
-                            Divider()
-                            // Status badge row
-                            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier.size(34.dp).clip(RoundedCornerShape(10.dp))
-                                        .background(when (employeeRecord?.status) { "Active" -> AppTheme.SuccessBg; "OnLeave" -> AppTheme.WarningBg; else -> AppTheme.Ink50 }),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(Icons.Outlined.CheckCircle, null,
-                                        tint = when (employeeRecord?.status) { "Active" -> AppTheme.Success; "OnLeave" -> AppTheme.Warning; else -> AppTheme.Ink500 },
-                                        modifier = Modifier.size(18.dp))
-                                }
-                                Spacer(Modifier.width(14.dp))
-                                Text("Status", color = AppTheme.Ink500, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                                val statusText  = employeeRecord?.status ?: "—"
-                                val statusColor = when (statusText) { "Active" -> AppTheme.Success; "OnLeave" -> AppTheme.Warning; "Inactive" -> AppTheme.Danger; else -> AppTheme.Ink500 }
-                                Box(modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(statusColor.copy(alpha = 0.12f)).padding(horizontal = 10.dp, vertical = 4.dp)) {
-                                    Text(statusText, color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = onPersonalInfo)
+                                .padding(horizontal = 16.dp, vertical = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(AppTheme.Brand50),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Person,
+                                    contentDescription = null,
+                                    tint     = AppTheme.Brand,
+                                    modifier = Modifier.size(22.dp),
+                                )
                             }
-                        }
-                    }
-
-                    // Additional info — only render when data exists, using smart-cast via let
-                    employeeRecord?.let { rec ->
-                        if (rec.address.isNotBlank() || rec.emergencyName.isNotBlank()) {
-                            Spacer(Modifier.height(12.dp))
-                            SectionLabel("ADDITIONAL INFORMATION")
-                            Spacer(Modifier.height(10.dp))
-                            AppCard(cornerRadius = 20.dp, contentPadding = 0.dp) {
-                                Column {
-                                    if (rec.address.isNotBlank()) {
-                                        ProfileInfoRow(Icons.Outlined.LocationOn, "Address", rec.address, AppTheme.WarningBg, AppTheme.Warning)
-                                    }
-                                    if (rec.emergencyName.isNotBlank()) {
-                                        if (rec.address.isNotBlank()) Divider()
-                                        ProfileInfoRow(
-                                            icon   = Icons.Outlined.ContactPhone,
-                                            label  = "Emergency Contact",
-                                            value  = buildString {
-                                                append(rec.emergencyName)
-                                                if (rec.emergencyRelation.isNotBlank()) append("  ·  ${rec.emergencyRelation}")
-                                            },
-                                            iconBg   = AppTheme.DangerBg,
-                                            iconTint = AppTheme.Danger,
-                                        )
-                                        if (rec.emergencyPhone.isNotBlank()) {
-                                            Divider()
-                                            ProfileInfoRow(Icons.Outlined.Phone, "Emergency Phone", rec.emergencyPhone, AppTheme.DangerBg, AppTheme.Danger)
-                                        }
-                                    }
-                                }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    employeeRecord?.name?.takeIf { it.isNotBlank() } ?: name,
+                                    color      = AppTheme.Ink900,
+                                    fontSize   = 15.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    listOfNotNull(
+                                        (employeeRecord?.role?.takeIf { it.isNotBlank() } ?: role).takeIf { it.isNotBlank() },
+                                        employeeRecord?.department?.takeIf { it.isNotBlank() },
+                                    ).joinToString(" · ").ifBlank { user.email },
+                                    color    = AppTheme.Ink500,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                )
                             }
+                            Text("›", color = AppTheme.Ink300, fontSize = 22.sp)
                         }
                     }
                 }
@@ -476,9 +438,16 @@ fun ProfileScreen(
                 Spacer(Modifier.height(10.dp))
                 AppCard(cornerRadius = 20.dp, contentPadding = 0.dp) {
                     Column {
-                        SettingsRow(Icons.Outlined.Person,   "Personal Information") { }
+                        SettingsRow(Icons.Outlined.Person, "Personal Information") {
+                            if (!isAdmin) onPersonalInfo() // employees navigate to read-only screen
+                        }
                         Divider()
-                        SettingsRow(Icons.Outlined.Shield,   "Security & PIN") { }
+                        SettingsRow(
+                            icon = Icons.Outlined.Shield,
+                            label = "Security & PIN",
+                            trailingBadge = "COMING SOON",
+                            enabled = false,
+                        ) { }
                         Divider()
                         SettingsRow(Icons.Outlined.Language, "Language & Region") { }
                         // Link Manager — visible only to full admins (not senior managers)
@@ -674,20 +643,47 @@ private fun SettingsRow(
     icon: ImageVector,
     label: String,
     tint: Color = AppTheme.Ink700,
+    trailingBadge: String? = null,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val iconBg = if (tint == AppTheme.Ink700) AppTheme.Ink50 else tint.copy(alpha = 0.12f)
-    Row(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+    val rowAlpha = if (enabled) 1f else 0.55f
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .alpha(rowAlpha),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Box(modifier = Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(iconBg), contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp))
         }
         Spacer(Modifier.width(14.dp))
         Text(label, color = if (tint == AppTheme.Ink700) AppTheme.Ink900 else tint, fontSize = 14.sp, fontWeight = if (tint == AppTheme.Ink700) FontWeight.Normal else FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        if (trailingBadge != null) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(AppTheme.Brand50)
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            ) {
+                Text(
+                    trailingBadge,
+                    color = AppTheme.Brand,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.6.sp,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+        }
         Text("›",   color = AppTheme.Ink300, fontSize = 18.sp)
     }
 }
 
 @Composable
 private fun Divider() {
-    Box(modifier = Modifier.fillMaxWidth().height(1.dp).padding(start = 52.dp).background(AppTheme.Ink100))
+    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(AppTheme.Ink100))
 }

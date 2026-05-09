@@ -37,6 +37,19 @@ interface WorkforceDirectory {
         draft: EmployeeDraft,
     ): EmployeeRecord
 
+    /**
+     * Update an existing employee. Mirrors [addEmployee] but uses Firestore
+     * `update()` so immutable fields (uid, createdBy, createdAt, role,
+     * mustChangePassword) and the auth password are NOT touched. If
+     * [draft.photoUri] is non-blank a new photo is uploaded and replaces
+     * the previous `photoUrl`.
+     */
+    suspend fun updateEmployee(
+        adminId: String,
+        employeeId: String,
+        draft: EmployeeDraft,
+    ): EmployeeRecord
+
     /** Flips `mustChangePassword → false` and syncs `employee_map`. */
     suspend fun markPasswordChanged(adminId: String, uid: String)
 
@@ -224,6 +237,15 @@ interface WorkforceDirectory {
 
     /** Live stream of all attendance logs for this admin. */
     fun observeAttendance(adminId: String): Flow<List<AttendanceRecord>>
+
+    /**
+     * Live stream of attendance logs belonging to a single employee.
+     * Uses `whereEqualTo("userId", userId)` so Firestore security rules
+     * allow the query for non-admin users (employees can only list their
+     * own records — querying by adminId would return other employees'
+     * records and Firestore would reject the entire query).
+     */
+    fun observeMyAttendance(userId: String): Flow<List<AttendanceRecord>>
 
     suspend fun markCheckIn(
         adminId: String,

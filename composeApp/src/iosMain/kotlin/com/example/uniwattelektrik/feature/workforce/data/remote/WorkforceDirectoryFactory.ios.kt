@@ -34,6 +34,31 @@ private class StubWorkforceDirectory : WorkforceDirectory {
 
     override suspend fun markPasswordChanged(adminId: String, uid: String) { /* no-op */ }
     override suspend fun saveFcmToken(adminId: String, uid: String, token: String) { /* no-op */ }
+    override suspend fun updateEmployee(
+        adminId: String, employeeId: String, draft: EmployeeDraft,
+    ): EmployeeRecord = EmployeeRecord(
+        id                = employeeId,
+        name              = draft.name,
+        role              = draft.role,
+        phone             = draft.phone,
+        zone              = draft.zone,
+        status            = "Active",
+        tasksOpen         = 0,
+        email             = draft.email,
+        gender            = draft.gender,
+        employmentType    = draft.employmentType,
+        joiningDateMs     = draft.joiningDateMs,
+        salary            = draft.salary,
+        photoUrl          = "",
+        dateOfBirthMs     = draft.dateOfBirthMs,
+        address           = draft.address,
+        department        = draft.department,
+        reportingTo       = draft.reportingTo,
+        permission        = draft.permission,
+        emergencyName     = draft.emergencyName,
+        emergencyRelation = draft.emergencyRelation,
+        emergencyPhone    = draft.emergencyPhone,
+    )
 
     override fun observeTasksForAdmin(adminId: String): Flow<List<TaskRecord>> = flowOf(emptyList())
     override fun observeTasksForUser(userId: String): Flow<List<TaskRecord>> = flowOf(emptyList())
@@ -108,6 +133,7 @@ private class StubWorkforceDirectory : WorkforceDirectory {
     ): InventoryTransaction = InventoryTransaction("stub", adminId, userId, itemId, itemName, type, quantity)
 
     override fun observeAttendance(adminId: String): Flow<List<AttendanceRecord>> = flowOf(emptyList())
+    override fun observeMyAttendance(userId: String): Flow<List<AttendanceRecord>> = flowOf(emptyList())
     override suspend fun markCheckIn(
         adminId: String,
         userId: String,

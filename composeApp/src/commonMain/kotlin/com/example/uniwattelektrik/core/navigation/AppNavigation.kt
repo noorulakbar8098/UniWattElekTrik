@@ -25,6 +25,8 @@ sealed interface UserRoute {
     data object Notifications                : UserRoute
     data class WorkCompletion(val taskId: String)  : UserRoute
     data object Attendance                   : UserRoute
+    /** Read-only screen showing the signed-in employee's full profile details. */
+    data object PersonalInfo                 : UserRoute
 
     enum class TabKey { Home, Tasks, Leave, LiveMap, Profile }
 }
@@ -44,6 +46,7 @@ sealed interface AdminRoute {
     data object Profile     : Tab { override val tabKey = TabKey.Profile }
 
     data class EmployeeDetail(val employeeId: String) : AdminRoute
+    data class EditEmployee(val employeeId: String) : AdminRoute
     data class TaskDetail(val taskId: String) : AdminRoute
     data object Notifications        : AdminRoute
     data object Financials           : AdminRoute
@@ -218,6 +221,7 @@ class AdminNavigator internal constructor() {
         if (to is AdminRoute.SpareItemForm) return true
         if (to is AdminRoute.SpareItemDetail) return true
         if (to is AdminRoute.ImportSpareItemsPreview) return true
+        if (to is AdminRoute.EditEmployee) return true
 
         return false
     }

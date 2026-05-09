@@ -211,6 +211,75 @@ class FirestoreWorkforceDirectory(
         )
     }
 
+    override suspend fun updateEmployee(
+        adminId: String,
+        employeeId: String,
+        draft: EmployeeDraft,
+    ): EmployeeRecord {
+        val ref = firestore.collection(COL_USERS).document(employeeId)
+        AppLog.i("PATH", "update $COL_USERS/$employeeId")
+
+        // Optional new photo upload — only swap when a fresh URI was supplied.
+        val newPhotoUrl: String? = draft.photoUri?.takeIf { it.isNotBlank() }?.let { uri ->
+            runCatching { uploadEmployeePhoto(adminId, employeeId, uri) }
+                .onFailure { AppLog.w("PATH", "photo upload failed: ${it.message}") }
+                .getOrNull()
+        }
+
+        // Mutable employee fields. Notably DOES NOT include: uid, adminId,
+        // createdBy, createdAt, role ("user"/"admin" rank), mustChangePassword.
+        val data = mutableMapOf<String, Any?>(
+            "name"               to draft.name,
+            "phone"              to draft.phone,
+            "email"              to draft.email,
+            "gender"             to draft.gender,
+            "employmentType"     to draft.employmentType,
+            "salary"             to draft.salary,
+            "roleTitle"          to draft.role,
+            "zone"               to draft.zone,
+            "status"             to draft.status.lowercase(),
+            "address"            to draft.address,
+            "department"         to draft.department,
+            "reportingTo"        to draft.reportingTo,
+            "permission"         to draft.permission,
+            "emergencyName"      to draft.emergencyName,
+            "emergencyRelation"  to draft.emergencyRelation,
+            "emergencyPhone"     to draft.emergencyPhone,
+            "shift"              to draft.shift,
+            "updatedAt"          to FieldValue.serverTimestamp(),
+        )
+        draft.joiningDateMs?.let { data["joiningDate"] = Timestamp(java.util.Date(it)) }
+        draft.dateOfBirthMs?.let { data["dateOfBirth"] = Timestamp(java.util.Date(it)) }
+        newPhotoUrl?.let          { data["photoUrl"]    = it }
+
+        ref.update(data).awaitBounded()
+        AppLog.i("PATH", "  ↳ $COL_USERS/$employeeId updated (${data.size} fields)")
+
+        return EmployeeRecord(
+            id                = employeeId,
+            name              = draft.name,
+            role              = draft.role,
+            phone             = draft.phone,
+            zone              = draft.zone,
+            status            = normalizeEmployeeStatus(draft.status),
+            email             = draft.email,
+            gender            = draft.gender,
+            employmentType    = draft.employmentType,
+            joiningDateMs     = draft.joiningDateMs,
+            salary            = draft.salary,
+            photoUrl          = newPhotoUrl ?: "",
+            dateOfBirthMs     = draft.dateOfBirthMs,
+            address           = draft.address,
+            department        = draft.department,
+            reportingTo       = draft.reportingTo,
+            permission        = draft.permission,
+            emergencyName     = draft.emergencyName,
+            emergencyRelation = draft.emergencyRelation,
+            emergencyPhone    = draft.emergencyPhone,
+            shift             = draft.shift,
+        )
+    }
+
     override suspend fun markPasswordChanged(adminId: String, uid: String) {
         AppLog.i("PATH", "update $COL_USERS/$uid mustChangePassword=false")
         firestore.collection(COL_USERS).document(uid)
@@ -874,6 +943,41 @@ class FirestoreWorkforceDirectory(
         // Flat collection — simple equality filter, no collectionGroup needed.
         val reg = firestore.collection(COL_ATTENDANCE_LOGS)
             .whereEqualTo("adminId", adminId)
+            .orderBy("date", Query.Direction.DESCENDING)
+            .addSnapshotListener { snap, err ->
+                if (err != null) { close(err); return@addSnapshotListener }
+                val list = snap?.documents.orEmpty().map { d ->
+                    AttendanceRecord(
+                        id            = d.id,
+                        userId        = d.getString("userId") ?: "",
+                        dateMs        = d.getMillis("date") ?: 0L,
+                        checkInMs     = d.getMillis("checkIn") ?: 0L,
+                        checkInLat    = d.getDouble("checkInLat"),
+                        checkInLng    = d.getDouble("checkInLng"),
+                        checkInStatus = d.getString("checkInStatus") ?: "ON_TIME",
+                        checkOutMs    = d.getMillis("checkOut"),
+                        checkOutLat   = d.getDouble("checkOutLat"),
+                        checkOutLng   = d.getDouble("checkOutLng"),
+                        status        = d.getString("attendanceStatus")
+                            ?: if (d.getMillis("checkOut") != null) "COMPLETED" else "CHECKED_IN",
+                    )
+                }
+                trySend(list)
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /**
+     * Employee-scoped attendance query — filters by `userId` so Firestore only
+     * returns this employee's own records. The `whereEqualTo("adminId", adminId)`
+     * query would return ALL employees under that admin; Firestore then rejects it
+     * for non-admin callers because some returned docs have a different `userId`,
+     * causing intermittent "permission denied" failures on secondary devices.
+     */
+    override fun observeMyAttendance(userId: String): Flow<List<AttendanceRecord>> = callbackFlow {
+        AppLog.d("PATH", "observe $COL_ATTENDANCE_LOGS where userId==$userId")
+        val reg = firestore.collection(COL_ATTENDANCE_LOGS)
+            .whereEqualTo("userId", userId)
             .orderBy("date", Query.Direction.DESCENDING)
             .addSnapshotListener { snap, err ->
                 if (err != null) { close(err); return@addSnapshotListener }

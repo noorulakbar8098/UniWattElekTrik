@@ -195,6 +195,8 @@ fun AdminHomeScreen(
     onSpareClick: (com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItem) -> Unit = {},
     onLeaveRequestsClick: () -> Unit = {},
     onViewAllTasks: () -> Unit = {},
+    onViewAllEmployees: () -> Unit = {},
+    onViewInventory: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     TrackScreenPerformance("AdminHomeScreen")
@@ -340,6 +342,7 @@ fun AdminHomeScreen(
                         badgeBg      = Color(0xFFDCFCE7),
                         badgeFg      = Success,
                         alpha        = gridAlpha,
+                        onClick      = onViewAllEmployees,
                     )
                     KpiCard(
                         modifier     = Modifier.weight(1f),
@@ -352,6 +355,7 @@ fun AdminHomeScreen(
                         badgeFg      = Warning,
                         livePulse    = true,
                         alpha        = gridAlpha,
+                        onClick      = onViewAllTasks,
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -365,6 +369,7 @@ fun AdminHomeScreen(
                         badgeBg      = Color(0xFFDCFCE7),
                         badgeFg      = Success,
                         alpha        = gridAlpha,
+                        onClick      = onViewAllTasks,
                     )
                     KpiCard(
                         modifier     = Modifier.weight(1f),
@@ -376,6 +381,7 @@ fun AdminHomeScreen(
                         badgeBg      = if (pendingHigh > 0) Color(0xFFFEE2E2) else Color(0xFFDCFCE7),
                         badgeFg      = if (pendingHigh > 0) Danger else Success,
                         alpha        = gridAlpha,
+                        onClick      = onViewAllTasks,
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -389,6 +395,7 @@ fun AdminHomeScreen(
                         badgeBg      = Color(0xFFE0EAFF),
                         badgeFg      = Highlight,
                         alpha        = gridAlpha,
+                        onClick      = onViewInventory,
                     )
                     KpiCard(
                         modifier     = Modifier.weight(1f),

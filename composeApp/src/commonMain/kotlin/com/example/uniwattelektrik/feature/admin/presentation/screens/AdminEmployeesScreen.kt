@@ -68,7 +68,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import com.example.uniwattelektrik.core.components.AppPullToRefresh
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -77,6 +79,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -89,6 +92,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -191,9 +195,11 @@ fun AdminEmployeesScreen(
 
     com.example.uniwattelektrik.core.theme.SetStatusBar(color = GradStart, darkIcons = false)
 
-    var query     by remember { mutableStateOf("") }
-    var category  by remember { mutableStateOf(RoleCategory.All) }
+    var query     by rememberSaveable { mutableStateOf("") }
+    var category  by rememberSaveable { mutableStateOf(RoleCategory.All) }
     var showAdd   by remember { mutableStateOf(false) }
+    // Restore scroll position when navigating back from EmployeeDetail.
+    val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
 
     // Notify parent shell to hide nav bar when add form is shown
     LaunchedEffect(showAdd) { onShowAddChange(showAdd) }
@@ -269,12 +275,20 @@ fun AdminEmployeesScreen(
             )
 
             // ── Scrollable list content ─────────────────────────────────
+            if (loading && employees.isEmpty()) {
+                // Header stays visible above; shimmer renders BELOW it.
+                com.example.uniwattelektrik.core.components.InlineSkeleton(
+                    type = com.example.uniwattelektrik.core.components.SkeletonType.EmployeeList,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
             AppPullToRefresh(
                 onRefresh = { workforceVm.refresh() },
                 modifier  = Modifier.weight(1f),
             ) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
+                state = listState,
                 contentPadding = PaddingValues(bottom = 120.dp), // clear of FAB + nav
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
@@ -314,6 +328,7 @@ fun AdminEmployeesScreen(
                 }
             }
             } // AppPullToRefresh
+            } // else (loading skeleton branch)
         }     // Column
 
         // ── Floating action button (sits above the bottom nav, matches Task list FAB) ────
@@ -869,7 +884,7 @@ private fun InfoBlock(emoji: String, title: String, body: String) {
  * ────────────────────────────────────────────────────────────────────────── */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AddEmployeeSheet(
+internal fun AddEmployeeSheet(
     saving: Boolean,
     errorMsg: String?,
     createdName: String?,
@@ -879,38 +894,46 @@ private fun AddEmployeeSheet(
     onDoneSharing: () -> Unit,
     onCancel: () -> Unit,
     onSubmit: (EmployeeDraft) -> Unit,
+    initial: EmployeeRecord? = null,
     modifier: Modifier = Modifier,
 ) {
+    val isEdit = initial != null
     // Tint the system status bar to match the gradient header (matches the
     // Task creation screen behaviour). Without this, white icons would be
     // invisible on a light status bar background on some devices.
     com.example.uniwattelektrik.core.theme.SetStatusBar(color = Highlight, darkIcons = false)
 
     /* ── Personal ───────────────────────────────────────────────────── */
-    var name by remember { mutableStateOf("") }
-    var dobMs by remember { mutableStateOf<Long?>(null) }
-    var gender by remember { mutableStateOf("Male") }
-    var phone by remember { mutableStateOf("") }
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var address by remember { mutableStateOf("") }
+    var name by remember(initial) { mutableStateOf(initial?.name ?: "") }
+    var dobMs by remember(initial) { mutableStateOf<Long?>(initial?.dateOfBirthMs) }
+    var gender by remember(initial) { mutableStateOf(initial?.gender?.takeIf { it.isNotBlank() } ?: "Male") }
+    var phone by remember(initial) { mutableStateOf(initial?.phone ?: "") }
+    var email by remember(initial) { mutableStateOf(initial?.email ?: "") }
+    var password by remember(initial) { mutableStateOf("") }
+    var address by remember(initial) { mutableStateOf(initial?.address ?: "") }
 
     /* ── Employment ─────────────────────────────────────────────────── */
-    var role by remember { mutableStateOf("Substation Engineer · L1") }
-    var department by remember { mutableStateOf("") }
-    var reportingTo by remember { mutableStateOf("") }
-    var joiningMs by remember { mutableStateOf<Long?>(null) }
-    var empType by remember { mutableStateOf("Fulltime") }
-    var salaryStr by remember { mutableStateOf("") }
-    var zone by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("Active") }
-    var permission by remember { mutableStateOf("Field") }   // Viewer | Field | Super
-    var shift by remember { mutableStateOf("Shift1") }       // Shift1 | Shift2
+    var role by remember(initial) { mutableStateOf(initial?.role?.takeIf { it.isNotBlank() } ?: "Substation Engineer · L1") }
+    var department by remember(initial) { mutableStateOf(initial?.department ?: "") }
+    var reportingTo by remember(initial) { mutableStateOf(initial?.reportingTo ?: "") }
+    var joiningMs by remember(initial) { mutableStateOf<Long?>(initial?.joiningDateMs) }
+    var empType by remember(initial) { mutableStateOf(initial?.employmentType?.takeIf { it.isNotBlank() } ?: "Fulltime") }
+    var salaryStr by remember(initial) {
+        mutableStateOf(
+            initial?.salary?.takeIf { it > 0 }?.let {
+                if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
+            } ?: ""
+        )
+    }
+    var zone by remember(initial) { mutableStateOf(initial?.zone?.takeIf { it != "—" } ?: "") }
+    var status by remember(initial) { mutableStateOf(initial?.status?.takeIf { it.isNotBlank() } ?: "Active") }
+    var permission by remember(initial) { mutableStateOf(initial?.permission?.takeIf { it.isNotBlank() } ?: "Field") }   // Viewer | Field | Super
+    var shift by remember(initial) { mutableStateOf(initial?.shift?.takeIf { it.isNotBlank() } ?: "Shift1") }       // Shift1 | Shift2
 
     /* ── Emergency contact ──────────────────────────────────────────── */
-    var emergencyName by remember { mutableStateOf("") }
-    var emergencyRelation by remember { mutableStateOf("") }
-    var emergencyPhone by remember { mutableStateOf("") }
+    var emergencyName by remember(initial) { mutableStateOf(initial?.emergencyName ?: "") }
+    var emergencyRelation by remember(initial) { mutableStateOf(initial?.emergencyRelation ?: "") }
+    var emergencyPhone by remember(initial) { mutableStateOf(initial?.emergencyPhone ?: "") }
 
     /* ── Date pickers ───────────────────────────────────────────────── */
     var showJoiningDate by remember { mutableStateOf(false) }
@@ -940,6 +963,7 @@ private fun AddEmployeeSheet(
         else -> null
     }
     val passwordError = when {
+        isEdit                          -> null   // password is not editable in edit mode
         submitted && password.isBlank() -> "Password is required"
         submitted && password.length < 6 -> "Min 6 characters"
         else -> null
@@ -956,7 +980,7 @@ private fun AddEmployeeSheet(
         name.isNotBlank() &&
                 phone.isNotBlank() &&
                 email.isNotBlank() &&
-                password.length >= 6 &&
+                (isEdit || password.length >= 6) &&
                 salaryStr.toDoubleOrNull() != null &&
                 !saving
 
@@ -1000,8 +1024,8 @@ private fun AddEmployeeSheet(
 
     // After a successful create, swap the form for a "Share via WhatsApp"
     // success card so the admin can hand the temp creds to the employee
-    // before closing the sheet.
-    if (createdEmail != null && createdPassword != null) {
+    // before closing the sheet. Only relevant for the create flow.
+    if (!isEdit && createdEmail != null && createdPassword != null) {
         ShareCredentialsScreen(
             name = createdName.orEmpty(),
             email = createdEmail,
@@ -1020,12 +1044,15 @@ private fun AddEmployeeSheet(
                 onSave      = submitForm,
                 saveEnabled = canSubmit,
                 saving      = saving,
+                title       = if (isEdit) "Edit Employee" else "Add Employee",
+                subtitle    = if (isEdit) "UPDATE EMPLOYEE PROFILE" else "NEW HIRE ONBOARDING",
             )
 
             /* ── Scrollable content ─────────────────────────────────────── */
             Column(
                 modifier = Modifier
                     .weight(1f)  // Takes remaining space above the action bar
+                    .imePadding() // Push content above the keyboard so the focused field is visible.
                     .verticalScroll(scrollState)
                     .padding(bottom = actionBarHeight + 32.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -1058,6 +1085,7 @@ private fun AddEmployeeSheet(
                             enabled = !saving,
                             isError = nameError != null,
                             errorText = nameError,
+                            semanticsLabel = "employee-full-name",
                         )
                     }
                     Column {
@@ -1094,6 +1122,7 @@ private fun AddEmployeeSheet(
                             enabled = !saving,
                             isError = phoneError != null,
                             errorText = phoneError,
+                            semanticsLabel = "employee-phone-number",
                         )
                     }
                     Column {
@@ -1108,9 +1137,10 @@ private fun AddEmployeeSheet(
                             enabled = !saving,
                             isError = emailError != null,
                             errorText = emailError,
+                            semanticsLabel = "employee-email-address",
                         )
                     }
-                    Column {
+                    if (!isEdit) Column {
                         FieldLabel("Temporary password", required = true)
                         DottedField(
                             value = password, onChange = { password = it },
@@ -1121,6 +1151,7 @@ private fun AddEmployeeSheet(
                             enabled = !saving,
                             isError = passwordError != null,
                             errorText = passwordError,
+                            semanticsLabel = "employee-new-password",
                         )
                         Spacer(Modifier.height(8.dp))
                         Row(
@@ -1454,7 +1485,7 @@ private fun AddEmployeeSheet(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = if (saving) "Saving…" else "Add employee",
+                            text = if (saving) "Saving…" else if (isEdit) "Save changes" else "Add employee",
                             color = Color.White,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
@@ -1525,6 +1556,8 @@ fun AddEmployeeHeader(
     onSave: () -> Unit = {},
     saveEnabled: Boolean = true,
     saving: Boolean = false,
+    title: String = "Add Employee",
+    subtitle: String = "NEW HIRE ONBOARDING",
 ) {
     com.example.uniwattelektrik.core.components.PremiumHeaderBackground(
         roundedBottom = false,
@@ -1549,14 +1582,14 @@ fun AddEmployeeHeader(
                 // Titles
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "Add Employee",
+                        title,
                         color = Color.White,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = (-0.2).sp,
                     )
                     Text(
-                        "NEW HIRE ONBOARDING",
+                        subtitle,
                         color = WhiteAlpha70,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold,

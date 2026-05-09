@@ -2,6 +2,12 @@ package com.example.uniwattelektrik.feature.user.presentation.screens
 
 import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,9 +22,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Construction
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.MyLocation
 import androidx.compose.material3.Icon
@@ -32,10 +41,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -93,6 +105,7 @@ fun LiveMapScreen(
         }
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -199,6 +212,154 @@ fun LiveMapScreen(
             }
         }
         Spacer(Modifier.height(16.dp))
+    } // end Column
+
+    // ── Under Development overlay ──────────────────────────────────────────
+    UnderDevelopmentOverlay()
+    } // end outer Box
+}
+
+@Composable
+private fun UnderDevelopmentOverlay() {
+    val transition = rememberInfiniteTransition(label = "pulse")
+    val pulseAlpha by transition.animateFloat(
+        initialValue = 0.55f,
+        targetValue  = 1f,
+        animationSpec = infiniteRepeatable(
+            animation  = tween(1600, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "pulseAlpha",
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF0A1929).copy(alpha = 0.93f),
+                        Color(0xFF0D2137).copy(alpha = 0.96f),
+                    ),
+                ),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+            modifier = Modifier.padding(horizontal = 40.dp),
+        ) {
+            // Pulsing icon circle
+            Box(
+                modifier = Modifier
+                    .size(96.dp)
+                    .alpha(pulseAlpha)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFF1E73E8).copy(alpha = 0.30f),
+                                Color(0xFF1E73E8).copy(alpha = 0.08f),
+                            ),
+                        ),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(68.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(Color(0xFF1E73E8), Color(0xFF0A3D91)),
+                            ),
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector        = Icons.Outlined.Construction,
+                        contentDescription = null,
+                        tint               = Color.White,
+                        modifier           = Modifier.size(34.dp),
+                    )
+                }
+            }
+
+            // "COMING SOON" badge
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color(0xFF1E73E8).copy(alpha = 0.18f))
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+            ) {
+                Row(
+                    verticalAlignment     = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF60A5FA).copy(alpha = pulseAlpha)),
+                    )
+                    Text(
+                        "COMING SOON",
+                        color         = Color(0xFF60A5FA),
+                        fontSize      = 10.sp,
+                        fontWeight    = FontWeight.Bold,
+                        letterSpacing = 1.8.sp,
+                    )
+                }
+            }
+
+            // Main headline
+            Text(
+                "Live Map",
+                color      = Color.White,
+                fontSize   = 28.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign  = TextAlign.Center,
+            )
+
+            // Subtitle
+            Text(
+                "We're building a real-time field map with live GPS tracking, employee locations, and task overlays.\n\nThis feature will be available in a future update.",
+                color      = Color.White.copy(alpha = 0.62f),
+                fontSize   = 14.sp,
+                textAlign  = TextAlign.Center,
+                lineHeight = 22.sp,
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            // Feature preview pills
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                FeaturePill("📍  Live employee locations")
+                FeaturePill("🗺  Task site overlays")
+                FeaturePill("🔔  Geo-fenced alerts")
+            }
+        }
+    }
+}
+
+@Composable
+private fun FeaturePill(text: String) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(alpha = 0.07f))
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text,
+            color      = Color.White.copy(alpha = 0.75f),
+            fontSize   = 13.sp,
+            fontWeight = FontWeight.Medium,
+        )
     }
 }
 

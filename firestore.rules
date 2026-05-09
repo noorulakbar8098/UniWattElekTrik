@@ -112,6 +112,12 @@ service cloud.firestore {
     }
 
     // ── Attendance ─────────────────────────────────────────────────────────
+    // Admin reads via `whereEqualTo("adminId", adminId)` — ownsExisting() passes.
+    // Employee reads via `whereEqualTo("userId", userId)` — every returned doc
+    // satisfies resource.data.userId == request.auth.uid, so the list is allowed.
+    // IMPORTANT: employees must NOT query by adminId because that returns ALL
+    // employees' records; Firestore rejects the entire query when any doc has a
+    // different userId (cross-device "permission denied" bug).
     match /attendance_logs/{attendanceId} {
       allow create:         if ownsIncoming()
                               || (isAuthed() && request.resource.data.userId == request.auth.uid);
