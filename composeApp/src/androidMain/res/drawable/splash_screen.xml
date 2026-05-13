@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Activity window background.
+
+    The UniWatt mark is painted by the Android 12+ system splash itself via
+    `windowSplashScreenAnimatedIcon` → drawable/splash_icon.xml. Once that
+    system splash dismisses, this background takes over — so we keep it as
+    pure brand-blue. Rendering the logo here too caused a SECOND copy at a
+    different size to appear right after the system splash icon ("two logos"
+    symptom). Brand-blue only means a seamless handoff from splash → app.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/splash_bg" />
+</layer-list>

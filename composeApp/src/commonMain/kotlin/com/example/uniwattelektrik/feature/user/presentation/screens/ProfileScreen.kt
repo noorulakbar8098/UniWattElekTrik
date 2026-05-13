@@ -122,6 +122,14 @@ fun ProfileScreen(
     isSeniorManager: Boolean = false,
     /** Called when the employee taps "Personal Information" in Settings (user mode only). */
     onPersonalInfo: () -> Unit = {},
+    /**
+     * Called when the user taps a row in the "Recent activity" feed.
+     * The status hint mirrors the task's workflow state ("Todo" / "InProgress"
+     * / "InReview" / "Done") so the host shell can deep-link into the task
+     * list with the matching tab pre-selected — e.g. tapping a review-stage
+     * task lands the user on the "In review" tab.
+     */
+    onOpenTaskList: (statusHint: String?) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     TrackScreenPerformance("ProfileScreen")
@@ -592,6 +600,9 @@ fun ProfileScreen(
                                         statusTint  = taskStatusTint(t.status),
                                         statusBg    = taskStatusBg(t.status),
                                         relativeTime = formatRelativeTime(ts, nowMs),
+                                        // Admin recent-activity rows route to the Tasks screen with
+                                        // the matching workflow tab preselected (see AdminShell).
+                                        onClick = { onOpenTaskList(t.status) },
                                     )
                                     if (index != recentTasks.lastIndex) HairlineDivider()
                                 }
@@ -752,6 +763,10 @@ fun ProfileScreen(
                                         statusTint  = taskStatusTint(t.status),
                                         statusBg    = taskStatusBg(t.status),
                                         relativeTime = formatRelativeTime(ts, nowMs),
+                                        // Tapping routes to the user task list with this task's
+                                        // status tab focused — review-stage rows land on
+                                        // "In review", in-progress rows on "In progress", etc.
+                                        onClick = { onOpenTaskList(t.status) },
                                     )
                                     if (index != myRecent.lastIndex) HairlineDivider()
                                 }
@@ -772,8 +787,9 @@ fun ProfileScreen(
                     Spacer(Modifier.height(10.dp))
                     AppCard(cornerRadius = 20.dp, contentPadding = 0.dp) {
                         Column {
-                            SettingsRow(Icons.Outlined.Person, "Personal Information") { }
-                            HairlineDivider()
+                            // "Personal Information" row removed for admin —
+                            // admins manage their own record via the team list
+                            // / Link Manager, not through this settings tab.
                             SettingsRow(
                                 icon = Icons.Outlined.Shield,
                                 label = "Security & PIN",
@@ -781,7 +797,12 @@ fun ProfileScreen(
                                 enabled = false,
                             ) { }
                             HairlineDivider()
-                            SettingsRow(Icons.Outlined.Language, "Language & Region") { }
+                            SettingsRow(
+                                icon          = Icons.Outlined.Language,
+                                label         = "Language & Region",
+                                trailingBadge = "COMING SOON",
+                                enabled       = false,
+                            ) { }
                             HairlineDivider()
                             // Monthly report — aggregated KPIs + CSV export.
                             SettingsRow(
@@ -849,6 +870,26 @@ fun ProfileScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Text("Sign out", color = AppTheme.Danger, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+
+        // App version — anchored at the very bottom of the settings list.
+        // Bumped manually with each release; sourced from versionName in
+        // build.gradle.kts. Subtle so it doesn't compete with sign-out.
+        item {
+            Box(
+                modifier         = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp, bottom = 24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "v 1.0",
+                    color      = AppTheme.Ink300,
+                    fontSize   = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    letterSpacing = 0.4.sp,
+                )
             }
         }
     }
@@ -1005,16 +1046,25 @@ private fun OperationsCard(
         OpsSeverity.Brand   -> AppTheme.Brand50
         OpsSeverity.Info    -> AppTheme.Ink50
     }
-    // Danger cards get a subtle tinted background — directs the eye to where
-    // action is needed. Info/brand stay on the neutral surface.
-    val cardBg = if (severity == OpsSeverity.Danger) bg.copy(alpha = 0.55f) else AppTheme.Surface
+    // Visual consistency — every severity sits on the same clean white surface
+    // so a Danger card can't accidentally read as a washed-out "white shade"
+    // inside a pink halo (caused by the old translucent DangerBg trick which
+    // didn't match the fully-opaque icon-tile background sat on top of it).
+    // Severity is now conveyed by the icon-tile colour + a 1dp tinted border
+    // on Danger only — keeping the eye drawn to anything that needs action.
+    val cardBg = AppTheme.Surface
+    val borderColor = if (severity == OpsSeverity.Danger) {
+        AppTheme.Danger.copy(alpha = 0.35f)
+    } else {
+        Color.Transparent
+    }
     val shape = RoundedCornerShape(16.dp)
     Box(
         modifier = modifier
             .shadow(1.dp, shape, spotColor = Color(0x10000000))
             .clip(shape)
             .background(cardBg)
-            .border(1.dp, color = Color.Transparent, shape)
+            .border(1.dp, color = borderColor, shape)
             .clickable(onClick = onClick)
             .padding(14.dp),
     ) {
@@ -1067,10 +1117,12 @@ private fun ActivityRow(
     statusTint   : Color,
     statusBg     : Color,
     relativeTime : String,
+    onClick      : (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

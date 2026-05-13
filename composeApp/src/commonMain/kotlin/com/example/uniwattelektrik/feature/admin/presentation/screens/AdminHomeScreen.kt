@@ -63,6 +63,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -642,22 +643,53 @@ fun AdminHomeScreen(
 /* ──────────────────────────────────────────────────────────────────────────
  *  HOME CONTENT SKELETON  — shown BELOW the header while Firestore loads
  *  Matches the real home layout: status strip → KPI grid → task rows
+ *  Renders a *sweeping* shimmer (left → right gradient pass) on every bone,
+ *  not just a pulsing alpha — and stretches edge-to-edge so the entire
+ *  area below the header is covered while we wait for streams.
  * ────────────────────────────────────────────────────────────────────────── */
 @Composable
 private fun HomeContentSkeleton(modifier: Modifier = Modifier) {
-    val shimmerAlpha by rememberInfiniteTransition(label = "hskel").animateFloat(
-        initialValue = 0.35f,
-        targetValue  = 0.70f,
+    // Single shared sweep — every bone receives the same gradient progress so
+    // the wave reads as one cohesive light pass across the whole screen.
+    val transition = rememberInfiniteTransition(label = "homeSkel")
+    val sweep by transition.animateFloat(
+        initialValue = 0f,
+        targetValue  = 1f,
         animationSpec = infiniteRepeatable(
-            animation  = tween(durationMillis = 900, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
+            animation  = tween(durationMillis = 1300, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
         ),
-        label = "hskelAlpha",
+        label = "homeSkelSweep",
     )
-    val bg = Color(0xFFE2E8F0).copy(alpha = shimmerAlpha)
 
+    // Bone — a rounded box that paints its base gray, then draws a moving
+    // diagonal highlight gradient over the top. Highlight alpha 0.55 makes
+    // the shimmer obvious without overwhelming the layout.
     @Composable
-    fun Bone(m: Modifier) = Box(m.clip(RoundedCornerShape(14.dp)).background(bg))
+    fun Bone(m: Modifier) {
+        Box(
+            modifier = m
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFFE2E8F0))
+                .drawWithContent {
+                    drawContent()
+                    val w = size.width
+                    val band = w * 0.6f                        // highlight band width
+                    val startX = -band + (w + band) * sweep    // ‑band → w
+                    drawRect(
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.White.copy(alpha = 0.55f),
+                                Color.Transparent,
+                            ),
+                            start = Offset(startX, 0f),
+                            end   = Offset(startX + band, size.height),
+                        ),
+                    )
+                },
+        )
+    }
 
     Column(
         modifier = modifier
@@ -686,11 +718,14 @@ private fun HomeContentSkeleton(modifier: Modifier = Modifier) {
             }
         }
 
+        // ── Performance chart card placeholder ─────────────────────────────
+        Bone(Modifier.fillMaxWidth().height(220.dp))
+
         // ── Section header ─────────────────────────────────────────────────
         Bone(Modifier.fillMaxWidth(0.38f).height(18.dp))
 
         // ── Recent task rows ───────────────────────────────────────────────
-        repeat(4) {
+        repeat(5) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -707,6 +742,9 @@ private fun HomeContentSkeleton(modifier: Modifier = Modifier) {
                 Bone(Modifier.width(52.dp).height(24.dp).clip(RoundedCornerShape(50.dp)))
             }
         }
+        // Tail spacer pushes the skeleton's last bone down so on tall phones
+        // the bottom of the screen stays covered (no white half).
+        Spacer(modifier = Modifier.weight(1f))
     }
 }
 

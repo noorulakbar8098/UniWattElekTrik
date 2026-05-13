@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Person
@@ -180,10 +181,14 @@ fun TaskDetailScreen(
     val voicePlayer   = com.example.uniwattelektrik.core.platform.rememberVoicePlayer()
     // Per-second tick so the recording label updates smoothly.
     var recordingTickMs by remember { mutableStateOf(0L) }
+    // Tracks the post-stop upload window so the composer can show a small
+    // inline spinner the moment the user taps "send voice", cleared as soon
+    // as the Firestore listener delivers the actual voice note.
+    var isUploadingVoice by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(voiceRecorder.isRecording) {
         while (voiceRecorder.isRecording) {
             recordingTickMs = voiceRecorder.elapsedMs
-            kotlinx.coroutines.delay(200)
+            kotlinx.coroutines.delay(80)
         }
         recordingTickMs = 0L
     }
@@ -468,6 +473,7 @@ fun TaskDetailScreen(
                                 }
                             },
                             isRecording       = voiceRecorder.isRecording,
+                            isUploading       = isUploadingVoice,
                             recordingMs       = recordingTickMs,
                             // MediaRecorder.prepare()/start()/stop() are
                             // synchronous native calls that can take hundreds
@@ -482,6 +488,7 @@ fun TaskDetailScreen(
                                 scope.launch {
                                     val rec = voiceRecorder.stop()
                                     if (rec != null && workforceVm != null && currentUserId.isNotBlank()) {
+                                        isUploadingVoice = true
                                         workforceVm.postVoiceNote(
                                             adminId    = adminUid.ifBlank { live?.adminId ?: "" },
                                             taskId     = taskId,
@@ -491,6 +498,7 @@ fun TaskDetailScreen(
                                             contentUri = rec.contentUri,
                                             durationMs = rec.durationMs,
                                         ) { result ->
+                                            isUploadingVoice = false
                                             result.fold(
                                                 onSuccess = {
                                                     ToastController.success(
@@ -1448,6 +1456,7 @@ private fun ComposerRow(
     onChange: (String) -> Unit,
     onSend: () -> Unit,
     isRecording: Boolean = false,
+    isUploading: Boolean = false,
     recordingMs: Long = 0L,
     onStartRecording: () -> Unit = {},
     onStopRecording: () -> Unit = {},
@@ -1499,6 +1508,23 @@ private fun ComposerRow(
                 // Send (▶ rotated as paper-plane proxy)
                 Icon(Icons.Filled.Add, null, tint = Color.White, modifier = Modifier.size(18.dp))
             }
+        } else if (isUploading) {
+            // Brief "uploading voice note" state — sits between Stop and the
+            // moment the Firestore listener delivers the new note. A small
+            // inline spinner so it feels responsive without blocking the UI.
+            CircularProgressIndicator(
+                color       = Brand,
+                strokeWidth = 2.dp,
+                modifier    = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "Uploading voice note…",
+                color = InkSecondary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+            )
         } else {
             Box(modifier = Modifier.weight(1f)) {
                 if (value.isEmpty()) {
@@ -1524,7 +1550,12 @@ private fun ComposerRow(
                         .clickable(onClick = onStartRecording),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text("🎤", fontSize = 16.sp)
+                    Icon(
+                        Icons.Filled.Mic,
+                        contentDescription = "Record voice note",
+                        tint               = Color.White,
+                        modifier           = Modifier.size(18.dp),
+                    )
                 }
             } else {
                 Box(
@@ -1934,6 +1965,7 @@ private fun sampleFromRecord(t: TaskRecord): com.example.uniwattelektrik.core.sa
     }
     val status = when (t.status) {
         "InProgress" -> com.example.uniwattelektrik.core.sample.TaskStatus.InProgress
+        "InReview"   -> com.example.uniwattelektrik.core.sample.TaskStatus.InReview
         "Done"       -> com.example.uniwattelektrik.core.sample.TaskStatus.Done
         else         -> com.example.uniwattelektrik.core.sample.TaskStatus.Todo
     }

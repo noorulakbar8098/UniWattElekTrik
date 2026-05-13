@@ -6,7 +6,8 @@
         postSplashScreenTheme (API 31+) is handled in values-v31/themes.xml.
     -->
     <style name="Theme.UniWatt.Splash" parent="@android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@color/splash_bg</item>
+        <!-- Brand logo centred on splash_bg — see drawable/splash_screen.xml -->
+        <item name="android:windowBackground">@drawable/splash_screen</item>
         <item name="android:statusBarColor">@color/splash_bg</item>
         <item name="android:navigationBarColor">@color/splash_bg</item>
     </style>

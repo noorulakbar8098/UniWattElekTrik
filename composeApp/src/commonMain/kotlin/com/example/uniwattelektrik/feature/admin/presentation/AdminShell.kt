@@ -378,7 +378,19 @@ fun AdminShell(
                     role         = "Operations Admin · ${user.adminId ?: "—"}",
                     onLogout     = { viewModel.onEvent(AuthUiEvent.Logout) },
                     workforceVm  = workforceVm,
-                    onNavigate   = { route -> nav.navigate(route) }
+                    onNavigate   = { route -> nav.navigate(route) },
+                    // Recent-activity rows route into AdminTasksScreen with the
+                    // matching workflow tab focused. AdminTasksScreen uses the
+                    // tab key "Review" (not "InReview"); other statuses pass
+                    // through as-is. Null hint = leave tab default.
+                    onOpenTaskList = { statusHint ->
+                        tasksInitialTab = when (statusHint) {
+                            "InReview" -> "Review"
+                            null       -> null
+                            else       -> statusHint
+                        }
+                        nav.navigate(AdminRoute.Tasks)
+                    },
                 )
                 is AdminRoute.EmployeeDetail -> AdminEmployeeDetailScreen(
                     employeeId  = r.employeeId,

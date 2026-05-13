@@ -59,10 +59,10 @@ fun Modifier.shimmerOverlay(enabled: Boolean = true): Modifier {
 
     val transition = rememberInfiniteTransition(label = "globalShimmer")
     val progress = transition.animateFloat(
-        initialValue = -1f,
-        targetValue = 2f,
+        initialValue = 0f,
+        targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2200, easing = LinearEasing),
+            animation = tween(durationMillis = 1300, easing = LinearEasing),
             repeatMode = RepeatMode.Restart,
         ),
         label = "globalShimmerProgress",
@@ -71,19 +71,21 @@ fun Modifier.shimmerOverlay(enabled: Boolean = true): Modifier {
     return drawWithContent {
         drawContent()
 
-        val width = size.width
-        val startX = (progress.value - 1f) * width
-        val endX = progress.value * width
-
+        val w = size.width
+        // Highlight band ~60% of bone width, sweeping fully off the left
+        // edge to fully off the right edge each cycle. This produces a
+        // clearly visible left→right shimmer pass (not a static glow).
+        val band = w * 0.6f
+        val startX = -band + (w + band) * progress.value
         drawRect(
             brush = Brush.linearGradient(
                 colors = listOf(
                     Color.Transparent,
-                    Color.White.copy(alpha = 0.06f),
+                    Color.White.copy(alpha = 0.45f),
                     Color.Transparent,
                 ),
                 start = Offset(startX, 0f),
-                end = Offset(endX, size.height),
+                end = Offset(startX + band, size.height),
             ),
         )
     }

@@ -88,6 +88,23 @@ actual fun AttendanceMap(
         }
     }
 
+    // Markers we own — kept separately so we never have to scan
+    // `mapView.overlays` (which can race with the tile-fetch threads and crash
+    // with ConcurrentModificationException when the user taps day chips fast).
+    val ownedMarkers = remember { mutableListOf<Marker>() }
+
+    // Lifecycle — OSMDroid tile + GPS providers fire callbacks on background
+    // threads and MUST be released when the composable leaves the tree,
+    // otherwise the next recomposition pump can dereference a dead MapView.
+    DisposableEffect(mapView) {
+        onDispose {
+            runCatching {
+                mapView.overlays.clear()
+                mapView.onDetach()
+            }
+        }
+    }
+
     // ── My-location (blue dot) overlay ────────────────────────────────────
     // The first time the OS pushes a fix to us, animate to that point and
     // zoom in to street level (17). After that the user can pan/zoom freely.
@@ -116,27 +133,47 @@ actual fun AttendanceMap(
     }
 
     // ── Employee markers ──────────────────────────────────────────────────
+    // Mutate `overlays` on the MapView's own message queue so we never collide
+    // with an in-flight tile-draw on another thread. Errors are swallowed
+    // (logged at most) — a dropped marker is fine, a crash on tab click is not.
     LaunchedEffect(markers) {
-        // Drop only employee Marker overlays — keep the my-location overlay.
-        mapView.overlays.removeAll { it is Marker }
-        markers.forEach { m ->
-            val pin = Marker(mapView).apply {
-                position = GeoPoint(m.latitude, m.longitude)
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                title = m.title
-                snippet = m.snippet
+        mapView.post {
+            runCatching {
+                // Remove only the markers WE added — by reference, not by type
+                // scan — so we never trip the overlay-list iterator.
+                ownedMarkers.forEach { mapView.overlays.remove(it) }
+                ownedMarkers.clear()
+
+                markers.forEach { m ->
+                    val pin = Marker(mapView).apply {
+                        position = GeoPoint(m.latitude, m.longitude)
+                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                        title = m.title
+                        snippet = m.snippet
+                        // Custom avatar-style pin: coloured circle with the
+                        // employee's initials and a downward tail. Replaces
+                        // osmdroid's generic red drop pin so the map reads
+                        // like a delivery-app/operations dashboard.
+                        icon = buildEmployeeMarkerIcon(
+                            context  = context,
+                            initials = initialsForName(m.title),
+                            accent   = colorForEmployee(m.id),
+                        )
+                    }
+                    mapView.overlays.add(pin)
+                    ownedMarkers.add(pin)
+                }
+                // If we don't have a my-location fix yet, fall back to centring
+                // on the first employee marker so the screen is never empty.
+                if (myLocationOverlay.myLocation == null) {
+                    markers.firstOrNull()?.let {
+                        mapView.controller.animateTo(GeoPoint(it.latitude, it.longitude))
+                        mapView.controller.setZoom(15.0)
+                    }
+                }
+                mapView.invalidate()
             }
-            mapView.overlays.add(pin)
         }
-        // If we don't have a my-location fix yet, fall back to centring on the
-        // first employee marker so the screen is never empty.
-        if (myLocationOverlay.myLocation == null) {
-            markers.firstOrNull()?.let {
-                mapView.controller.animateTo(GeoPoint(it.latitude, it.longitude))
-                mapView.controller.setZoom(15.0)
-            }
-        }
-        mapView.invalidate()
     }
 
     Box(modifier = modifier) {
@@ -218,3 +255,115 @@ actual fun AttendanceMap(
     }
 }
 
+/* ─── Custom marker helpers ───────────────────────────────────────────────
+ *
+ *  Builds an avatar-style pin drawable (coloured circle + initials + tail)
+ *  on demand. Each employee gets a stable colour derived from their id so
+ *  the same person renders the same way across recompositions.
+ */
+
+private fun buildEmployeeMarkerIcon(
+    context : android.content.Context,
+    initials: String,
+    accent  : Int,
+): android.graphics.drawable.Drawable {
+    val density = context.resources.displayMetrics.density
+    val circleDp = 40f      // circle diameter
+    val tailDp   = 8f       // tail height below the circle
+    val ringDp   = 2f       // white border around the circle
+    val padDp    = 4f       // outer padding for the soft shadow
+
+    val widthPx  = ((circleDp + padDp * 2) * density).toInt()
+    val heightPx = ((circleDp + tailDp + padDp * 2) * density).toInt()
+    val bitmap = android.graphics.Bitmap.createBitmap(
+        widthPx, heightPx, android.graphics.Bitmap.Config.ARGB_8888,
+    )
+    val canvas = android.graphics.Canvas(bitmap)
+
+    val cx     = widthPx / 2f
+    val cy     = (padDp + circleDp / 2f) * density
+    val radius = (circleDp / 2f) * density
+    val ring   = ringDp * density
+
+    // Soft drop-shadow circle behind the avatar — simulated with a 12 %
+    // alpha black circle offset down by 2dp (works in software canvas
+    // where Paint.setShadowLayer doesn't reliably render).
+    val shadowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0x29000000   // 16 % black
+    }
+    canvas.drawCircle(cx, cy + 2 * density, radius + 1 * density, shadowPaint)
+
+    // Tail — small triangle whose tip is at the geo-point (bottom-center
+    // anchor of the marker).
+    val tailPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = accent
+    }
+    val tailHalf  = 5f * density
+    val tailTopY  = cy + radius - 1f
+    val tailTipY  = cy + radius + tailDp * density
+    val tailPath  = android.graphics.Path().apply {
+        moveTo(cx - tailHalf, tailTopY)
+        lineTo(cx, tailTipY)
+        lineTo(cx + tailHalf, tailTopY)
+        close()
+    }
+    canvas.drawPath(tailPath, tailPaint)
+
+    // Main coloured circle.
+    canvas.drawCircle(
+        cx, cy, radius,
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = accent
+        },
+    )
+
+    // White ring around the circle for crisp pop on any tile background.
+    canvas.drawCircle(
+        cx, cy, radius - ring / 2f,
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            style       = android.graphics.Paint.Style.STROKE
+            strokeWidth = ring
+            color       = android.graphics.Color.WHITE
+        },
+    )
+
+    // Initials — bold, centered, white.
+    val textPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color    = android.graphics.Color.WHITE
+        textSize = 14f * density
+        textAlign = android.graphics.Paint.Align.CENTER
+        typeface = android.graphics.Typeface.create(
+            android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD,
+        )
+    }
+    val textVerticalOffset = (textPaint.descent() + textPaint.ascent()) / 2f
+    canvas.drawText(initials.take(2).uppercase(), cx, cy - textVerticalOffset, textPaint)
+
+    return android.graphics.drawable.BitmapDrawable(context.resources, bitmap)
+}
+
+/** Stable accent colour per employee — hashed from the id. */
+private fun colorForEmployee(id: String): Int {
+    val palette = intArrayOf(
+        0xFF1A6BF5.toInt(),   // brand blue
+        0xFFEC4899.toInt(),   // pink
+        0xFF14B8A6.toInt(),   // teal
+        0xFFF59E0B.toInt(),   // amber
+        0xFF7C3AED.toInt(),   // violet
+        0xFF22C55E.toInt(),   // green
+        0xFF06B6D4.toInt(),   // cyan
+        0xFFF97316.toInt(),   // orange
+    )
+    val index = (id.hashCode() and Int.MAX_VALUE) % palette.size
+    return palette[index]
+}
+
+/** First letter of first name + first letter of last name, uppercased. */
+private fun initialsForName(name: String): String {
+    val parts = name.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+    return when {
+        parts.isEmpty() -> "??"
+        parts.size == 1 -> parts[0].take(2).uppercase()
+        else            -> (parts.first().take(1) + parts.last().take(1)).uppercase()
+    }
+}

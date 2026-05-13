@@ -85,10 +85,39 @@ fun TaskListScreen(
     onTaskClick : (taskId: String) -> Unit,
     modifier    : Modifier = Modifier,
     workforceVm : WorkforceViewModel? = null,
+    /**
+     * Optional initial status to focus on first composition (one of
+     * "Todo" / "InProgress" / "InReview" / "Done"). Lets external callers
+     * — e.g. tapping a recent-activity row on Profile — open the list with
+     * the matching tab already selected. Null = "All".
+     */
+    initialStatusFilter: String? = null,
+    /** Invoked after [initialStatusFilter] has been applied so the caller can clear it. */
+    onInitialStatusConsumed: () -> Unit = {},
 ) {
     TrackScreenPerformance("TaskListScreen")
     var query          by remember { mutableStateOf("") }
     var priorityFilter by remember { mutableStateOf<TaskPriority?>(null) }
+    // Status tab filter — null means "All". Lets the user surface tasks that
+    // have been escalated to admin review (TaskStatus.InReview), which were
+    // previously buried under the unfiltered list.
+    var statusFilter   by remember { mutableStateOf<TaskStatus?>(null) }
+
+    // Honour an externally-provided initial status (deep-link from Profile's
+    // "Recent activity" rows). One-shot — clears via the consumed callback so
+    // subsequent recompositions don't override the user's own tab choice.
+    androidx.compose.runtime.LaunchedEffect(initialStatusFilter) {
+        if (initialStatusFilter != null) {
+            statusFilter = when (initialStatusFilter) {
+                "InProgress" -> TaskStatus.InProgress
+                "InReview"   -> TaskStatus.InReview
+                "Done"       -> TaskStatus.Done
+                "Todo"       -> TaskStatus.Todo
+                else         -> null
+            }
+            onInitialStatusConsumed()
+        }
+    }
 
     val liveTasks by (workforceVm?.tasks?.collectAsStateWithLifecycle()
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<TaskRecord>()) }
@@ -97,6 +126,7 @@ fun TaskListScreen(
     val allTasks = liveTasks.map { it.toSampleTask() }
 
     val filtered = allTasks.filter { task ->
+        (statusFilter   == null || task.status   == statusFilter) &&
         (priorityFilter == null || task.priority == priorityFilter) &&
         (query.isBlank()
             || task.title.contains(query, ignoreCase = true)
@@ -105,6 +135,11 @@ fun TaskListScreen(
 
     val activeCount = remember(allTasks) { allTasks.count { it.status != TaskStatus.Done } }
     val doneCount   = remember(allTasks) { allTasks.count { it.status == TaskStatus.Done } }
+    // Per-tab counts — shown inline so the user can see at a glance how many
+    // items live behind each tab (especially the In-review queue).
+    val todoCount     = remember(allTasks) { allTasks.count { it.status == TaskStatus.Todo } }
+    val progressCount = remember(allTasks) { allTasks.count { it.status == TaskStatus.InProgress } }
+    val reviewCount   = remember(allTasks) { allTasks.count { it.status == TaskStatus.InReview } }
 
     SetStatusBar(color = OperationsHeaderStatusBarColor, darkIcons = false)
 
@@ -120,6 +155,59 @@ fun TaskListScreen(
             query         = query,
             onQueryChange = { query = it },
         )
+
+        // ── Status tabs (All / To do / In progress / In review / Done) ──
+        // Surfaced as the first filter row so escalated/review tasks are
+        // never hidden — the count badge on each chip tells the user
+        // exactly how many items live in that bucket.
+        LazyRow(
+            contentPadding        = PaddingValues(horizontal = AppTheme.SpLg),
+            horizontalArrangement = Arrangement.spacedBy(AppTheme.SpSm),
+            modifier              = Modifier
+                .fillMaxWidth()
+                .padding(top = AppTheme.SpMd),
+        ) {
+            item {
+                DsFilterChip(
+                    label    = "All (${allTasks.size})",
+                    selected = statusFilter == null,
+                    tint     = AppTheme.Brand,
+                    onClick  = { statusFilter = null },
+                )
+            }
+            item {
+                DsFilterChip(
+                    label    = "To do ($todoCount)",
+                    selected = statusFilter == TaskStatus.Todo,
+                    tint     = AppTheme.Ink500,
+                    onClick  = { statusFilter = TaskStatus.Todo },
+                )
+            }
+            item {
+                DsFilterChip(
+                    label    = "In progress ($progressCount)",
+                    selected = statusFilter == TaskStatus.InProgress,
+                    tint     = AppTheme.Brand,
+                    onClick  = { statusFilter = TaskStatus.InProgress },
+                )
+            }
+            item {
+                DsFilterChip(
+                    label    = "In review ($reviewCount)",
+                    selected = statusFilter == TaskStatus.InReview,
+                    tint     = AppTheme.Warning,
+                    onClick  = { statusFilter = TaskStatus.InReview },
+                )
+            }
+            item {
+                DsFilterChip(
+                    label    = "Completed ($doneCount)",
+                    selected = statusFilter == TaskStatus.Done,
+                    tint     = AppTheme.Success,
+                    onClick  = { statusFilter = TaskStatus.Done },
+                )
+            }
+        }
 
         // ── Priority filter chips ─────────────────────────────────────────
         LazyRow(
@@ -286,6 +374,7 @@ private fun TaskRecord.toSampleTask(): SampleTask = SampleTask(
     },
     status           = when (status) {
         "InProgress" -> TaskStatus.InProgress
+        "InReview"   -> TaskStatus.InReview
         "Done"       -> TaskStatus.Done
         else         -> TaskStatus.Todo
     },

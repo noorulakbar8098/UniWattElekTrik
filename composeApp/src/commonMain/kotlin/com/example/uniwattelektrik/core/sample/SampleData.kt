@@ -16,6 +16,10 @@ import com.example.uniwattelektrik.core.theme.AppTheme
 enum class TaskStatus(val label: String, val color: Color, val bg: Color) {
     Todo      ("To do",       AppTheme.Ink500, AppTheme.Ink50),
     InProgress("In progress", AppTheme.Brand,  AppTheme.Brand50),
+    // Awaiting admin review (escalated from Todo/InProgress, or sent back).
+    // Uses the brand "Warning" palette to match the admin-side review badge
+    // styling so the same task reads consistently across user & admin UIs.
+    InReview  ("In review",   AppTheme.Warning, AppTheme.WarningBg),
     Done      ("Completed",   AppTheme.Success,    AppTheme.SuccessBg),
 }
 

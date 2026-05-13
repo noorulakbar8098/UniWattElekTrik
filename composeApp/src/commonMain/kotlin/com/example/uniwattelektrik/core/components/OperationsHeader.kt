@@ -88,6 +88,8 @@ fun OperationsHeaderSurface(
     bottomPadding: androidx.compose.ui.unit.Dp = HeaderBottomPadding,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // Solid dark surface — no transparency at any edge. Ink900 → HeaderEnd
+    // vertical gradient, fully opaque throughout.
     Box(
         modifier = modifier
             .fillMaxWidth()

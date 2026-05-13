@@ -70,6 +70,8 @@ fun AppBottomNavBar(
         require(items.size in 3..6) { "AppBottomNavBar expects 3–6 tabs (got ${items.size})." }
     }
 
+    // Solid dark nav — no transparency at either edge. The cyan hairline
+    // below handles the visual separation against the brand footer above.
     Box(
         modifier = modifier
             .fillMaxWidth()

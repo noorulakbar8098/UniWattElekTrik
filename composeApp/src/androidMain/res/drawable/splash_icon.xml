@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    System-splash icon for Android 12+ (`windowSplashScreenAnimatedIcon`).
+
+    The platform always clips the splash icon canvas to a circle and treats
+    only the inner ~2/3 as the "safe zone". A full-bleed bitmap therefore has
+    its corners chopped off (the original "edge cutting" symptom).
+
+    Wrapping the logo in an <inset> shrinks the artwork to roughly 50% of the
+    canvas so it sits comfortably inside the safe zone — no clipping, and the
+    logo is visible the moment the activity launches (no "blank blue" frame).
+-->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/app_logo_new"
+    android:inset="25%" />
+

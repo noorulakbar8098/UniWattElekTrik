@@ -375,20 +375,10 @@ private fun EmployeesGradientHeader(
         extras = {
             // Search bar
             SearchField(query = query, onQuery = onQuery)
-            Spacer(Modifier.height(12.dp))
-            // Role chips
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                RoleCategory.entries.forEach { c ->
-                    RoleChip(
-                        label    = c.label,
-                        selected = category == c,
-                        onClick  = { onCategory(c) },
-                    )
-                }
-            }
+            // Role-category chips (All / Field / Office / Support) were removed
+            // — search is the only filter surface now. The [category] param is
+            // kept for binary compatibility but is always [RoleCategory.All],
+            // so the upstream `.filter { ... }` short-circuits to true.
         },
     )
 }

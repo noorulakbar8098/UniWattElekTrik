@@ -48,17 +48,13 @@ fun App() {
     val viewModel = remember { AppContainer.createAuthViewModel() }
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    // No Compose splash. The native Android 12+ system splash
-    // (windowSplashScreenBackground = @color/splash_bg = #0D1B3E + adaptive
-    // icon) is the *only* splash. We just hold an invisible Ink900 frame
-    // while auth bootstrap is resolving so the Login screen doesn't flash
-    // for signed-in users on cold start.
+    // No Compose splash. The activity's windowBackground is a layer-list
+    // (splash_bg + full app_logo_new centred) so during the bootstrap window
+    // we render NOTHING — letting the native window background show the
+    // unclipped logo until auth finishes restoring. As soon as bootstrap
+    // resolves we draw the real screen on top.
     if (state is AuthUiState.Bootstrapping) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFF0D1B3E)),
-        )
+        Box(modifier = Modifier.fillMaxSize())
         return
     }
 

@@ -22,9 +22,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -69,6 +71,11 @@ fun UserShell(
     // Per-route saveable state holder so list scroll positions, search
     // queries, etc. survive push→pop navigation.
     val saveableHolder = rememberSaveableStateHolder()
+    // One-shot deep-link hint: Profile → Recent activity row sets this to the
+    // tapped task's status, then we hand it to TaskListScreen on the next
+    // composition. Cleared via onInitialStatusConsumed so the user keeps
+    // control of the tab afterwards.
+    var pendingTaskListStatus by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(user.id, user.parentAdminId) {
         workforceVm.loadForUser(user.id, adminUid = user.parentAdminId)
     }
@@ -170,6 +177,8 @@ fun UserShell(
             UserRoute.Tasks -> saveableHolder.SaveableStateProvider("tasks") { TaskListScreen(
                 onTaskClick = { id -> nav.navigate(UserRoute.TaskDetail(id)) },
                 workforceVm = workforceVm,
+                initialStatusFilter     = pendingTaskListStatus,
+                onInitialStatusConsumed = { pendingTaskListStatus = null },
             ) }
             UserRoute.Leave -> saveableHolder.SaveableStateProvider("leave") { LeaveScreen(
                 workforceVm  = workforceVm,
@@ -188,6 +197,13 @@ fun UserShell(
                 isAdmin         = false,
                 workforceVm     = workforceVm,
                 onPersonalInfo  = { nav.navigate(UserRoute.PersonalInfo) },
+                // Tap-through from "Recent activity": stash the tapped task's
+                // status and jump to the Tasks tab — TaskListScreen consumes
+                // pendingTaskListStatus on its next composition.
+                onOpenTaskList  = { statusHint ->
+                    pendingTaskListStatus = statusHint
+                    nav.selectTab(UserRoute.Tasks)
+                },
             ) }
             is UserRoute.TaskDetail -> saveableHolder.SaveableStateProvider("task_detail:${r.taskId}") { TaskDetailScreen(
                 taskId      = r.taskId,

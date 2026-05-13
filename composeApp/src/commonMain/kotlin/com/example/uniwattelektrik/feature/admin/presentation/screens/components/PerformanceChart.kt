@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -1037,11 +1038,15 @@ private fun SummaryStatsRow(
         }
     }
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        // IntrinsicSize.Max measures the tallest child first, then stretches the
+        // shorter ones to match — so Total / Average / Peak always share one
+        // common height regardless of which decoration (sparkline, trend caption,
+        // none) each tile renders.
+        modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         StatTile(
-            modifier  = Modifier.weight(1f),
+            modifier  = Modifier.weight(1f).fillMaxHeight(),
             label     = "Total",
             value     = total.toString(),
             sublabel  = "This ${periodLabel.lowercase()}",
@@ -1050,7 +1055,7 @@ private fun SummaryStatsRow(
             sparkline = sparkline,
         )
         StatTile(
-            modifier  = Modifier.weight(1f),
+            modifier  = Modifier.weight(1f).fillMaxHeight(),
             label     = "Average",
             value     = avgText,
             sublabel  = "${stepLabel(periodLabel)} avg",
@@ -1059,7 +1064,7 @@ private fun SummaryStatsRow(
             trendCaption = trendCaption,
         )
         StatTile(
-            modifier  = Modifier.weight(1f),
+            modifier  = Modifier.weight(1f).fillMaxHeight(),
             label     = "Peak",
             value     = peakValue.toString(),
             sublabel  = peakLabel.ifBlank { "—" },
@@ -1167,9 +1172,17 @@ private fun StatTile(
             }
             !trendCaption.isNullOrBlank() -> {
                 Spacer(Modifier.height(2.dp))
+                // "Trending down" must read as a warning — override the tile's
+                // (green) accent with the brand Danger red so a regression is
+                // unmistakable. Up / stable keep the accent colour.
+                val captionColor = if (trendCaption.contains('↓')) {
+                    AppTheme.Danger
+                } else {
+                    accent.copy(alpha = 0.9f)
+                }
                 Text(
                     text     = trendCaption,
-                    color    = accent.copy(alpha = 0.9f),
+                    color    = captionColor,
                     fontSize = 9.5.sp,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = 0.2.sp,
