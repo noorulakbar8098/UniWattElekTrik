@@ -66,6 +66,8 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -649,47 +651,28 @@ fun AdminHomeScreen(
  * ────────────────────────────────────────────────────────────────────────── */
 @Composable
 private fun HomeContentSkeleton(modifier: Modifier = Modifier) {
-    // Single shared sweep — every bone receives the same gradient progress so
-    // the wave reads as one cohesive light pass across the whole screen.
+    // Single shared pulse — every bone breathes in unison.
+    //
+    // PERF NOTE: this skeleton previously used a left-→-right sweep painted
+    // via `drawWithContent` + `Brush.linearGradient(...)`, which re-allocated
+    // a brush + 2 Offsets + a colours list every frame × 17 bones (≈3000
+    // allocs/sec on the main thread). Combined with the 5 other infinite
+    // animations on this screen (bell-bounce, dot-pulse×2, live-pulse,
+    // pulse-$label) the GC pauses caused the visible "stuck" judder.
+    //
+    // The pulse below is a single animated Float fed into each bone's
+    // `graphicsLayer.alpha` — zero allocations, GPU-composited per frame,
+    // immune to UI-thread contention.
     val transition = rememberInfiniteTransition(label = "homeSkel")
-    val sweep by transition.animateFloat(
-        initialValue = 0f,
-        targetValue  = 1f,
+    val pulse by transition.animateFloat(
+        initialValue = 0.55f,
+        targetValue  = 1.0f,
         animationSpec = infiniteRepeatable(
-            animation  = tween(durationMillis = 1300, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
+            animation  = tween(durationMillis = 900, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
         ),
-        label = "homeSkelSweep",
+        label = "homeSkelPulse",
     )
-
-    // Bone — a rounded box that paints its base gray, then draws a moving
-    // diagonal highlight gradient over the top. Highlight alpha 0.55 makes
-    // the shimmer obvious without overwhelming the layout.
-    @Composable
-    fun Bone(m: Modifier) {
-        Box(
-            modifier = m
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFFE2E8F0))
-                .drawWithContent {
-                    drawContent()
-                    val w = size.width
-                    val band = w * 0.6f                        // highlight band width
-                    val startX = -band + (w + band) * sweep    // ‑band → w
-                    drawRect(
-                        brush = Brush.linearGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.White.copy(alpha = 0.55f),
-                                Color.Transparent,
-                            ),
-                            start = Offset(startX, 0f),
-                            end   = Offset(startX + band, size.height),
-                        ),
-                    )
-                },
-        )
-    }
 
     Column(
         modifier = modifier
@@ -704,7 +687,10 @@ private fun HomeContentSkeleton(modifier: Modifier = Modifier) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             repeat(3) {
-                Bone(Modifier.width(88.dp).height(32.dp).clip(RoundedCornerShape(50.dp)))
+                Bone(
+                    pulse = pulse,
+                    modifier = Modifier.width(88.dp).height(32.dp).clip(RoundedCornerShape(50.dp)),
+                )
             }
         }
 
@@ -714,15 +700,15 @@ private fun HomeContentSkeleton(modifier: Modifier = Modifier) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                repeat(3) { Bone(Modifier.weight(1f).height(82.dp)) }
+                repeat(3) { Bone(pulse = pulse, modifier = Modifier.weight(1f).height(82.dp)) }
             }
         }
 
         // ── Performance chart card placeholder ─────────────────────────────
-        Bone(Modifier.fillMaxWidth().height(220.dp))
+        Bone(pulse = pulse, modifier = Modifier.fillMaxWidth().height(220.dp))
 
         // ── Section header ─────────────────────────────────────────────────
-        Bone(Modifier.fillMaxWidth(0.38f).height(18.dp))
+        Bone(pulse = pulse, modifier = Modifier.fillMaxWidth(0.38f).height(18.dp))
 
         // ── Recent task rows ───────────────────────────────────────────────
         repeat(5) {
@@ -731,21 +717,48 @@ private fun HomeContentSkeleton(modifier: Modifier = Modifier) {
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
             ) {
-                Bone(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)))
+                Bone(pulse = pulse, modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)))
                 Column(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Bone(Modifier.fillMaxWidth(0.6f).height(13.dp))
-                    Bone(Modifier.fillMaxWidth(0.4f).height(11.dp))
+                    Bone(pulse = pulse, modifier = Modifier.fillMaxWidth(0.6f).height(13.dp))
+                    Bone(pulse = pulse, modifier = Modifier.fillMaxWidth(0.4f).height(11.dp))
                 }
-                Bone(Modifier.width(52.dp).height(24.dp).clip(RoundedCornerShape(50.dp)))
+                Bone(pulse = pulse, modifier = Modifier.width(52.dp).height(24.dp).clip(RoundedCornerShape(50.dp)))
             }
         }
         // Tail spacer pushes the skeleton's last bone down so on tall phones
         // the bottom of the screen stays covered (no white half).
         Spacer(modifier = Modifier.weight(1f))
     }
+}
+
+/**
+ * One rounded gray "bone" that breathes via [graphicsLayer.alpha].
+ *
+ * Cheap by design:
+ *  • No `drawWithContent` / no per-frame `Brush` allocation.
+ *  • [pulse] is read inside the `graphicsLayer { }` lambda — the State
+ *    subscription is on the *graphics layer*, not on composition, so only
+ *    the GPU layer's alpha is rewritten each frame, never the layout.
+ *  • Top-level composable (not nested) so Compose can apply skippability
+ *    optimisations on parameter equality.
+ */
+@Composable
+private fun Bone(
+    pulse: Float,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            // Reading `pulse` inside this block subscribes ONLY the render
+            // node to the State, not the composition. ⇒ no recomposition per
+            // frame, only a cheap GPU alpha rewrite.
+            .graphicsLayer { alpha = pulse }
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFFE2E8F0)),
+    )
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

@@ -67,6 +67,8 @@ import com.example.uniwattelektrik.core.theme.AppShapes
 import com.example.uniwattelektrik.core.theme.AppTheme
 import com.example.uniwattelektrik.core.theme.AppTypography
 import com.example.uniwattelektrik.core.theme.SetStatusBar
+import com.example.uniwattelektrik.core.components.OperationsHeader
+import com.example.uniwattelektrik.core.components.OperationsHeaderStatusBarColor
 import com.example.uniwattelektrik.core.theme.appScreenBackground
 import com.example.uniwattelektrik.feature.workforce.data.remote.LeaveRecord
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
@@ -143,7 +145,7 @@ fun LeaveScreen(
     val leaveRequests by workforceVm.leaveRequests.collectAsStateWithLifecycle()
     val actionInProgress by workforceVm.actionInProgress.collectAsStateWithLifecycle()
 
-    SetStatusBar(color = AppTheme.Bg, darkIcons = true)
+    SetStatusBar(color = OperationsHeaderStatusBarColor, darkIcons = false)
 
     // ── Apply-form bottom sheet state ───────────────────────────────────
     var applyOpen by remember { mutableStateOf(false) }
@@ -170,75 +172,42 @@ fun LeaveScreen(
 
     Box(modifier = modifier.fillMaxSize()) {
     Column(modifier = Modifier.fillMaxSize().background(appScreenBackground())) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = AppTheme.SpLg, vertical = AppTheme.SpMd),
-            verticalAlignment     = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(AppTheme.SpMd),
-        ) {
-            // Back chip
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .shadow(2.dp, RoundedCornerShape(12.dp), spotColor = Color(0x14000000))
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(AppTheme.Surface)
-                    .border(1.dp, AppTheme.Ink100, RoundedCornerShape(12.dp))
-                    .clickable(onClick = onBack),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint               = AppTheme.Ink900,
-                    modifier           = Modifier.size(20.dp),
-                )
-            }
-
-            // Title block
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    fyLabel,
-                    style = AppTypography.labelSmall.copy(
-                        color         = AppTheme.Ink500,
-                        letterSpacing = 1.4.sp,
-                    ),
-                )
-                Text(
-                    "Leave",
-                    style = AppTypography.displayMedium.copy(color = AppTheme.Ink900),
-                )
-            }
-
-            // + Apply CTA
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(
-                        Brush.horizontalGradient(listOf(AppTheme.Brand, AppTheme.Brand700))
+        // Dark OperationsHeader — matches the Task Board look on the user app.
+        // The "+ Apply" CTA moves into the actions slot (white-on-brand pill)
+        // so the header reads as one consistent dark band with the other
+        // user-side screens (TaskList, TaskDetail, CompleteWork, etc.).
+        OperationsHeader(
+            eyebrow  = fyLabel,
+            title    = "Leave",
+            onBack   = onBack,
+            actions  = {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(
+                            Brush.horizontalGradient(listOf(AppTheme.Brand, AppTheme.Brand700)),
+                        )
+                        .clickable { applyOpen = true }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment     = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = null,
+                        tint               = Color.White,
+                        modifier           = Modifier.size(14.dp),
                     )
-                    .clickable { applyOpen = true }
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment     = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Icon(
-                    Icons.Filled.Add,
-                    contentDescription = null,
-                    tint               = Color.White,
-                    modifier           = Modifier.size(16.dp),
-                )
-                Text(
-                    "Apply",
-                    style = AppTypography.labelLarge.copy(
-                        color      = Color.White,
-                        fontWeight = FontWeight.Bold,
-                    ),
-                )
-            }
-        }
+                    Text(
+                        "Apply",
+                        style = AppTypography.labelLarge.copy(
+                            color      = Color.White,
+                            fontWeight = FontWeight.Bold,
+                        ),
+                    )
+                }
+            },
+        )
 
         // ── Body (scrollable) ──────────────────────────────────────────
         LazyColumn(
