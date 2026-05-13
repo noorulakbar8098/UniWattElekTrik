@@ -1,0 +1,16 @@
+node_modules
+npm-debug.log
+
+# NEVER commit the Firebase service-account key — it's effectively a
+# root credential for every Firebase service. Use Fly secrets instead.
+firebase-service-account*.json
+*-firebase-adminsdk*.json
+
+# Local env files
+.env
+.env.*
+
+# Editor scratch
+.DS_Store
+.vscode
+.idea

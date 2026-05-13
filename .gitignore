@@ -21,3 +21,13 @@ node_modules/
 **/*-firebase-adminsdk-*.json
 **/serviceAccountKey*.json
 scripts/uniwattelectric-firebase-adminsdk-fbsvc-1c7d8831b6.json
+
+# ─── Release signing — NEVER COMMIT ────────────────────────────────────────
+# Real keystore + the properties file that feeds it into Gradle. Losing
+# these means losing the ability to publish updates to the Play listing,
+# so back them up in a password manager / CI secrets store.
+keystore.properties
+*.jks
+*.keystore
+release.jks
+

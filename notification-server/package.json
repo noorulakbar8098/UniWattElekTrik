@@ -1,0 +1,16 @@
+{
+  "name": "uniwatt-notification-server",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Free-tier replacement for Firebase Cloud Functions — listens to Firestore changes and emits FCM pushes via the Admin SDK. Designed to run on Fly.io's free tier with no credit card.",
+  "engines": { "node": ">=20" },
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev":   "node index.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "node-cron":      "^3.0.3"
+  }
+}
