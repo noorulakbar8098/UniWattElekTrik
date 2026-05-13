@@ -41,24 +41,33 @@ internal object CloudinaryUploader {
     /**
      * Upload [contentUri] to Cloudinary and return the permanent HTTPS URL.
      *
-     * @param context    Any Android context (used for ContentResolver).
-     * @param contentUri content:// or file:// URI string to upload.
-     * @param folder     Cloudinary sub-folder, e.g. "employee-photos/admin123".
-     * @param publicId   Optional file name in Cloudinary (no extension).
+     * @param context      Any Android context (used for ContentResolver).
+     * @param contentUri   content:// or file:// URI string to upload.
+     * @param folder       Cloudinary sub-folder, e.g. "employee-photos/admin123".
+     * @param publicId     Optional file name in Cloudinary (no extension).
+     * @param resourceType "image" / "video" / "raw" / "auto". For audio (.m4a)
+     *                     pass "video" — Cloudinary stores audio under the
+     *                     video resource type. Defaults to "image" so existing
+     *                     photo upload call sites keep working unchanged.
+     * @param mimeType     Multipart MIME for the file part (e.g. "audio/mp4").
+     * @param extension    File extension on the upload form-data filename.
      */
     suspend fun upload(
         context: Context,
         contentUri: String,
         folder: String,
         publicId: String? = null,
+        resourceType: String = "image",
+        mimeType: String = "image/jpeg",
+        extension: String = "jpg",
     ): String = withContext(Dispatchers.IO) {
-        AppLog.i("Cloudinary", "upload  folder=$folder  uri=$contentUri")
+        AppLog.i("Cloudinary", "upload type=$resourceType folder=$folder uri=$contentUri")
 
         val bytes = readBytes(context, contentUri)
         AppLog.i("Cloudinary", "  bytes=${bytes.size}")
 
         val uploadUrl =
-            "https://api.cloudinary.com/v1_1/${CloudinaryConfig.CLOUD_NAME}/image/upload"
+            "https://api.cloudinary.com/v1_1/${CloudinaryConfig.CLOUD_NAME}/$resourceType/upload"
 
         val bodyBuilder = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
@@ -66,8 +75,8 @@ internal object CloudinaryUploader {
             .addFormDataPart("folder", folder)
             .addFormDataPart(
                 "file",
-                "${publicId ?: "upload"}.jpg",
-                bytes.toRequestBody("image/jpeg".toMediaType()),
+                "${publicId ?: "upload"}.$extension",
+                bytes.toRequestBody(mimeType.toMediaType()),
             )
 
         publicId?.let { bodyBuilder.addFormDataPart("public_id", it) }
