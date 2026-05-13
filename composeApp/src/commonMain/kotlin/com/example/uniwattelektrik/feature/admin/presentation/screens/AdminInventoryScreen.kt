@@ -60,7 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.uniwattelektrik.core.components.InventoryScreenHeader
 import com.example.uniwattelektrik.core.components.PremiumGradientFab
-import com.example.uniwattelektrik.core.components.PremiumHeaderStatusBarColor
+import com.example.uniwattelektrik.core.components.OperationsHeaderStatusBarColor
 import com.example.uniwattelektrik.core.theme.AppTheme
 import com.example.uniwattelektrik.feature.admin.presentation.InventoryViewModel
 import com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.MinimalSpareCard
@@ -128,7 +128,7 @@ fun AdminInventoryScreen(
         selectedCategory != "All"
 
     com.example.uniwattelektrik.core.theme.SetStatusBar(
-        color = PremiumHeaderStatusBarColor, darkIcons = false,
+        color = OperationsHeaderStatusBarColor, darkIcons = false,
     )
 
     // ── Multi-selection state ───────────────────────────────────────────────

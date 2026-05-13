@@ -21,7 +21,10 @@ expect class LocalNotifier() {
      *   previous notification rather than stacking a duplicate.
      * @param routeKey one of the values understood by `DeepLinkBus`
      *   ("tasks", "leave", "approvals", "inventory", "attendance", "home").
+     * @param taskId optional Firestore task id — when present the tap
+     *   intent carries it through to [DeepLinkBus.taskId] so the shell can
+     *   pop the matching detail screen on top of the route.
      */
-    fun notify(id: Int, title: String, body: String, routeKey: String?)
+    fun notify(id: Int, title: String, body: String, routeKey: String?, taskId: String? = null)
 }
 

@@ -39,6 +39,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,6 +57,8 @@ import androidx.compose.material.icons.outlined.People
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -79,13 +83,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.uniwattelektrik.core.components.AppPullToRefresh
-import com.example.uniwattelektrik.core.components.PremiumHeaderBackground
+import com.example.uniwattelektrik.core.components.OperationsHeaderSurface
 import com.example.uniwattelektrik.feature.admin.presentation.components.MapMarker
 import com.example.uniwattelektrik.feature.workforce.data.remote.AttendanceRecord
 import com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeRecord
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
 import com.example.uniwattelektrik.platform.nowEpochMillis
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
@@ -140,6 +145,10 @@ fun AdminAttendanceScreen(
     workforceVm: WorkforceViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Tap on an employee row → push the per-employee attendance detail. */
+    onEmployeeClick: (userId: String) -> Unit = {},
+    /** Admin uid — required by the embedded leave approvals tab. */
+    adminUid: String = "",
 ) {
     TrackScreenPerformance("AdminAttendanceScreen")
 
@@ -159,15 +168,11 @@ fun AdminAttendanceScreen(
     var activeFilter by remember { mutableStateOf(AttendanceFilter.ALL) }
 
     // ── "Last updated Xs ago" counter ──────────────────────────────────────────
-    var secondsAgo by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(1000L)
-            secondsAgo++
-            if (secondsAgo > 59) secondsAgo = 0
-        }
-    }
-    LaunchedEffect(attendance.size, checkins.size) { secondsAgo = 0 }
+    // NOTE: state + tick effect are deliberately NOT hoisted here — see the
+    // private RelativeUpdatedTime composable at the bottom of the file.
+    // Reading the counter at screen level would cause the entire scroll surface
+    // to recompose every second, which is the single biggest scroll-jank
+    // source in this file. Now it lives inside the leaf Text only.
 
     // ── Date math ─────────────────────────────────────────────────────────────
     val selectedDate    = dates[selectedIdx]
@@ -282,28 +287,110 @@ fun AdminAttendanceScreen(
         attendance.count { it.checkInMs in todayStartMs until todayStartMs + 86_400_000L }
     }
 
-    // ── Bottom sheet ───────────────────────────────────────────────────────────
-    var selectedItem by remember { mutableStateOf<EmployeeAttendanceUi?>(null) }
-    val sheetState   = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // ── Tab pager: Attendance | Leave Requests ──────────────────────────────
+    val pagerState = rememberPagerState(pageCount = { 2 })
+    val coScope    = rememberCoroutineScope()
 
-    AppPullToRefresh(onRefresh = { workforceVm.refresh() }) {
-        LazyColumn(
-            modifier           = modifier.fillMaxSize().background(ScreenBg),
-            contentPadding     = PaddingValues(bottom = 100.dp),
-            verticalArrangement = Arrangement.spacedBy(0.dp),
+    Column(modifier = modifier.fillMaxSize().background(ScreenBg)) {
+
+        // 1. Premium gradient header — sits above the tabs. The "Xs ago"
+        //    ticker is encapsulated inside the header itself so the timer
+        //    can never bubble a recomposition up to the screen.
+        AttendancePremiumHeader(
+            todayOnField  = todayOnField,
+            absentCt      = absentCt,
+            lateCt        = lateCt,
+            updateResetKey = attendance.size to checkins.size,
+        )
+
+        // 1b. Live map.
+        // IMPORTANT: rendered OUTSIDE the HorizontalPager.
+        //
+        // `AttendanceMap` is an AndroidView wrapping the OSM map. When an
+        // AndroidView lives inside a Pager page, Compose remeasures and
+        // potentially reattaches it as the user changes filters / dates,
+        // which trips an Android-level recursive `dispatchGetDisplayList`
+        // crash. Hoisting it here keeps a single, stable map instance.
+        Spacer(Modifier.height(14.dp))
+        AttendanceMapSection(markers = markers)
+
+        // 2. Tab row — switches between attendance overview and leave requests.
+        PrimaryTabRow(
+            selectedTabIndex = pagerState.currentPage,
+            containerColor   = Color.White,
+            contentColor     = Brand,
         ) {
-
-            // ── 1. Premium header ──────────────────────────────────────────────
-            item {
-                AttendancePremiumHeader(
-                    todayOnField = todayOnField,
-                    absentCt     = absentCt,
-                    lateCt       = lateCt,
-                    secondsAgo   = secondsAgo,
+            val tabs = listOf("Attendance", "Leave Requests")
+            tabs.forEachIndexed { i, label ->
+                Tab(
+                    selected = pagerState.currentPage == i,
+                    onClick  = { coScope.launch { pagerState.animateScrollToPage(i) } },
+                    text = {
+                        Text(
+                            text       = label,
+                            fontSize   = 13.sp,
+                            fontWeight = if (pagerState.currentPage == i) FontWeight.Bold else FontWeight.Medium,
+                        )
+                    },
                 )
             }
+        }
 
-            // ── 2. Analytics cards ─────────────────────────────────────────────
+        // 3. Page contents.
+        HorizontalPager(
+            state    = pagerState,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        ) { page ->
+            when (page) {
+                0 -> AttendanceTabContent(
+                    workforceVm    = workforceVm,
+                    onTimeCt       = onTimeCt,
+                    lateCt         = lateCt,
+                    absentCt       = absentCt,
+                    activeFilter   = activeFilter,
+                    onActiveFilter = { activeFilter = it },
+                    dates          = dates,
+                    selectedIdx    = selectedIdx,
+                    onSelectDate   = { selectedIdx = it },
+                    filteredItems  = filteredItems,
+                    onEmployeeClick = onEmployeeClick,
+                )
+                else -> AdminLeaveApprovalsScreen(
+                    workforceVm = workforceVm,
+                    adminUid    = adminUid,
+                    onBack      = onBack,
+                    showHeader  = false,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Body of the "Attendance" tab — analytics, date selector, filter bar, map,
+ * and the employee list. Extracted so the tab can be swapped in cleanly via
+ * the parent HorizontalPager.
+ */
+@Composable
+private fun AttendanceTabContent(
+    workforceVm    : WorkforceViewModel,
+    onTimeCt       : Int,
+    lateCt         : Int,
+    absentCt       : Int,
+    activeFilter   : AttendanceFilter,
+    onActiveFilter : (AttendanceFilter) -> Unit,
+    dates          : List<kotlinx.datetime.LocalDate>,
+    selectedIdx    : Int,
+    onSelectDate   : (Int) -> Unit,
+    filteredItems  : List<EmployeeAttendanceUi>,
+    onEmployeeClick: (userId: String) -> Unit,
+) {
+    AppPullToRefresh(onRefresh = { workforceVm.refresh() }) {
+        LazyColumn(
+            modifier            = Modifier.fillMaxSize().background(ScreenBg),
+            contentPadding      = PaddingValues(bottom = 100.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+        ) {
             item {
                 Spacer(Modifier.height(18.dp))
                 AttendanceAnalyticsRow(
@@ -311,43 +398,30 @@ fun AdminAttendanceScreen(
                     lateCt       = lateCt,
                     absentCt     = absentCt,
                     activeFilter = activeFilter,
-                    onFilter     = { f -> activeFilter = if (activeFilter == f) AttendanceFilter.ALL else f },
+                    onFilter     = { f -> onActiveFilter(if (activeFilter == f) AttendanceFilter.ALL else f) },
                 )
             }
-
-            // ── 3. Date selector ──────────────────────────────────────────────
             item {
                 Spacer(Modifier.height(18.dp))
                 DateSelectorRow(
                     dates       = dates,
                     selectedIdx = selectedIdx,
-                    onSelect    = { selectedIdx = it },
+                    onSelect    = onSelectDate,
                 )
             }
-
-            // ── 4. Filter bar ──────────────────────────────────────────────────
             item {
                 Spacer(Modifier.height(14.dp))
                 AttendanceFilterBar(
                     selected = activeFilter,
-                    onSelect = { activeFilter = it },
+                    onSelect = onActiveFilter,
                 )
             }
-
-            // ── 5. Map ─────────────────────────────────────────────────────────
-            item {
-                Spacer(Modifier.height(16.dp))
-                AttendanceMapSection(markers = markers)
-            }
-
-            // ── 6. Employee list header ────────────────────────────────────────
+            // (Map lifted out of the pager — see parent Column.)
             item {
                 Spacer(Modifier.height(22.dp))
                 Row(
-                    modifier = Modifier
-                        .padding(horizontal = 20.dp)
-                        .fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
+                    modifier              = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
+                    verticalAlignment     = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
@@ -356,29 +430,20 @@ fun AdminAttendanceScreen(
                         fontSize   = 18.sp,
                         color      = InkPrimary,
                     )
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(Color(0xFFEEF2FF))
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
-                    ) {
-                        Text(
-                            "${filteredItems.size} shown",
-                            color      = Brand,
-                            fontSize   = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
+                    com.example.uniwattelektrik.core.components.DsStatusChip(
+                        label      = "${filteredItems.size} shown",
+                        tint       = Brand,
+                        background = Color(0xFFEEF2FF),
+                    )
                 }
                 Spacer(Modifier.height(10.dp))
             }
 
-            // ── 7. Employee cards ──────────────────────────────────────────────
             if (filteredItems.isEmpty()) {
                 item {
                     Box(
-                        modifier            = Modifier.fillMaxWidth().padding(40.dp),
-                        contentAlignment    = Alignment.Center,
+                        modifier         = Modifier.fillMaxWidth().padding(40.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Outlined.People, null, modifier = Modifier.size(48.dp), tint = Color(0xFFD1D5DB))
@@ -391,23 +456,11 @@ fun AdminAttendanceScreen(
                 items(filteredItems, key = { it.userId + it.status }) { item ->
                     EmployeeAttendanceCard(
                         item    = item,
-                        onClick = { selectedItem = item },
+                        onClick = { onEmployeeClick(item.userId) },
                     )
                     Spacer(Modifier.height(8.dp))
                 }
             }
-        }
-    }
-
-    // ── Bottom sheet ───────────────────────────────────────────────────────────
-    selectedItem?.let { item ->
-        ModalBottomSheet(
-            onDismissRequest    = { selectedItem = null },
-            sheetState          = sheetState,
-            containerColor      = Color.White,
-            shape               = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        ) {
-            EmployeeDetailSheet(item = item, onDismiss = { selectedItem = null })
         }
     }
 }
@@ -416,10 +469,13 @@ fun AdminAttendanceScreen(
 
 @Composable
 private fun AttendancePremiumHeader(
-    todayOnField: Int,
-    absentCt: Int,
-    lateCt: Int,
-    secondsAgo: Int,
+    todayOnField  : Int,
+    absentCt      : Int,
+    lateCt        : Int,
+    /** Any state that should reset the "seconds ago" ticker — passing this as
+     *  a key means the header's tick effect restarts when the underlying
+     *  attendance / check-in counts change. */
+    updateResetKey: Any = Unit,
 ) {
     // Pulsing dot animation
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -436,68 +492,93 @@ private fun AttendancePremiumHeader(
         label = "pulseScale",
     )
 
-    PremiumHeaderBackground(roundedBottom = true) {
-        Column(
-            modifier = Modifier
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 20.dp, vertical = 18.dp),
+    OperationsHeaderSurface {
+        Row(
+            modifier              = Modifier.fillMaxWidth(),
+            verticalAlignment     = Alignment.Top,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Row(
-                modifier            = Modifier.fillMaxWidth(),
-                verticalAlignment   = Alignment.Top,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                // Title + subtitle
-                Column {
-                    Text(
-                        "Field Workforce Live",
-                        color      = Color.White,
-                        fontSize   = 22.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = (-0.4).sp,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "$todayOnField Active  ·  $absentCt Absent  ·  $lateCt Late",
-                        color    = WhiteA70,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "ATTENDANCE",
+                    color = Color.White.copy(alpha = 0.45f),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 1.4.sp,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Field Workforce Live",
+                    color      = Color.White,
+                    fontSize   = 24.sp,             // canonical title size
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = (-0.4).sp,
+                )
+                Spacer(Modifier.height(2.dp))       // matches HeaderTitleToSubtitleGap
+                Text(
+                    "$todayOnField Active  ·  $absentCt Absent  ·  $lateCt Late",
+                    color    = Color.White.copy(alpha = 0.65f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
 
-                // LIVE badge + last updated
-                Column(horizontalAlignment = Alignment.End) {
-                    // Pulsing LIVE badge
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(WhiteA20)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
+            // LIVE badge + last updated
+            Column(horizontalAlignment = Alignment.End) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.White.copy(alpha = 0.10f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    Row(
+                        verticalAlignment      = Alignment.CenterVertically,
+                        horizontalArrangement  = Arrangement.spacedBy(6.dp),
                     ) {
-                        Row(
-                            verticalAlignment      = Alignment.CenterVertically,
-                            horizontalArrangement  = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .scale(pulseScale)
-                                    .clip(CircleShape)
-                                    .background(Success.copy(alpha = pulse)),
-                            )
-                            Text("LIVE", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.5.sp)
-                        }
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .scale(pulseScale)
+                                .clip(CircleShape)
+                                .background(Success.copy(alpha = pulse)),
+                        )
+                        Text("LIVE", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.5.sp)
                     }
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        if (secondsAgo == 0) "Just updated" else "${secondsAgo}s ago",
-                        color    = WhiteA70,
-                        fontSize = 10.sp,
-                    )
                 }
+                Spacer(Modifier.height(6.dp))
+                RelativeUpdatedTime(resetKey = updateResetKey)
             }
         }
     }
+}
+
+/* ─── Leaf: "Xs ago" ticker (scoped recomposition) ──────────────────────── */
+
+/**
+ * Owns its own per-second tick state. Skipping this lift would cause the
+ * entire attendance screen — including the LazyColumn — to recompose every
+ * second, blowing scroll smoothness.
+ */
+@Composable
+private fun RelativeUpdatedTime(
+    resetKey: Any,
+    modifier: Modifier = Modifier,
+) {
+    var secondsAgo by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000L)
+            secondsAgo = if (secondsAgo >= 59) 0 else secondsAgo + 1
+        }
+    }
+    // Whenever upstream data changes, snap the counter back to 0.
+    LaunchedEffect(resetKey) { secondsAgo = 0 }
+    Text(
+        text     = if (secondsAgo == 0) "Just updated" else "${secondsAgo}s ago",
+        color    = WhiteA70,
+        fontSize = 10.sp,
+        modifier = modifier,
+    )
 }
 
 // ─── 2. Analytics Cards ────────────────────────────────────────────────────────
@@ -1008,7 +1089,7 @@ private fun EmployeeDetailSheet(
                     DetailRow(Icons.Outlined.AccessTime, "Working hrs",  item.shiftDuration)
                 if (item.checkInLat != null && item.checkInLng != null)
                     DetailRow(Icons.Filled.LocationOn,  "GPS location",
-                        "%.4f, %.4f".format(item.checkInLat, item.checkInLng))
+                        "${fmt4(item.checkInLat)}, ${fmt4(item.checkInLng)}")
                 if (item.lateMins > 0)
                     DetailRow(Icons.Filled.Schedule,    "Late by",       "${item.lateMins} minutes", tint = Warning)
                 if (item.status == "ABSENT")
@@ -1060,3 +1141,19 @@ private fun dayAbbrev(name: String) = when (name.uppercase()) {
 private fun initials(name: String): String =
     name.split(" ").take(2).mapNotNull { it.firstOrNull()?.uppercaseChar() }.joinToString("")
         .ifEmpty { name.take(2).uppercase() }
+
+/**
+ * KMP-friendly fixed-precision formatter for `Double` values.
+ *
+ * `String.format` / `"%.4f".format(...)` is JVM-only and unavailable in
+ * Kotlin/Native (iOS). This rounds half-away-from-zero to 4 decimal places
+ * using only common stdlib primitives.
+ */
+private fun fmt4(value: Double): String {
+    val scaled = kotlin.math.round(value * 10000.0).toLong()
+    val sign   = if (scaled < 0) "-" else ""
+    val abs    = kotlin.math.abs(scaled)
+    val whole  = abs / 10000
+    val frac   = (abs % 10000).toString().padStart(4, '0')
+    return "$sign$whole.$frac"
+}

@@ -1,5 +1,8 @@
 package com.example.uniwattelektrik.feature.auth.presentation.screens
 
+import com.example.uniwattelektrik.core.components.DsAllCaughtUpEmptyState
+import com.example.uniwattelektrik.core.components.PremiumBrandFooter
+import com.example.uniwattelektrik.core.components.PremiumCarousel
 import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
 
 import androidx.compose.animation.core.Spring
@@ -58,6 +61,7 @@ import com.example.uniwattelektrik.feature.auth.presentation.components.StatusIn
 import com.example.uniwattelektrik.feature.auth.presentation.state.AuthUiEvent
 import com.example.uniwattelektrik.feature.auth.presentation.viewmodel.AuthViewModel
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
+import com.example.uniwattelektrik.feature.workforce.data.remote.isAssignedTo
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
 import com.example.uniwattelektrik.platform.LocationData
 import com.example.uniwattelektrik.platform.LocationProvider
@@ -186,7 +190,7 @@ fun HomeScreen(
 
     // Apply live Firestore tasks filtered to this user whenever the list changes.
     LaunchedEffect(liveTasks, user.id) {
-        val userTasks = liveTasks.filter { it.userId == user.id }
+        val userTasks = liveTasks.filter { it.isAssignedTo(user.id) }
         if (userTasks.isNotEmpty()) {
             state = state.applyLiveTasks(userTasks)
         }
@@ -462,7 +466,9 @@ private fun HomeScaffold(
                 start  = 20.dp,
                 end    = 20.dp,
                 top    = 16.dp,
-                bottom = 100.dp,
+                // Match the bottom-nav height so the dark brand footer sits flush
+                // against the top of the dark nav — they read as one continuous band.
+                bottom = 76.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
@@ -482,17 +488,14 @@ private fun HomeScaffold(
                 )
             }
             item {
+                PremiumCarousel(onSlideAction = { onViewAllTasks() })
+            }
+            item {
                 KanbanStripSection(
                     todoCount       = inProgressCount,
                     inProgressCount = state.totalTaskCount - inProgressCount - doneCount,
                     doneCount       = doneCount,
                     onTap           = onViewAllTasks,
-                )
-            }
-            item {
-                QuickActionsRow(
-                    onNewLeave = onNewLeave,
-                    onViewMap  = onViewMap,
                 )
             }
             item {
@@ -502,6 +505,11 @@ private fun HomeScaffold(
                     onTaskClick = onTaskClick,
                     onViewAll   = onViewAllTasks,
                 )
+            }
+            item {
+                // Break out of the LazyColumn's 20 dp horizontal contentPadding
+                // so the dark band runs full screen-width.
+                PremiumBrandFooter(breakOutHorizontal = 20.dp)
             }
         }
     }
@@ -870,16 +878,29 @@ fun TaskSection(
                 fontWeight = FontWeight.Bold,
                 modifier   = Modifier.weight(1f),
             )
-            Text(
-                "View all ($totalCount)",
-                color      = BlueAccent,
-                fontSize   = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier   = Modifier.clickable(onClick = onViewAll),
-            )
+            if (totalCount > 0) {
+                Text(
+                    "View all ($totalCount)",
+                    color      = BlueAccent,
+                    fontSize   = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier   = Modifier.clickable(onClick = onViewAll),
+                )
+            }
         }
-        tasks.forEach { task ->
-            TaskItem(task = task, onClick = { onTaskClick(task) })
+        if (totalCount == 0) {
+            // Premium empty state — surfaced inline in the home feed when no
+            // tasks have been assigned to this employee yet.
+            Box(modifier = Modifier.fillMaxWidth().height(260.dp)) {
+                DsAllCaughtUpEmptyState(
+                    title = "You're all caught up 🎉",
+                    body  = "No pending tasks for today. Take a well-earned break, or check back later.",
+                )
+            }
+        } else {
+            tasks.forEach { task ->
+                TaskItem(task = task, onClick = { onTaskClick(task) })
+            }
         }
     }
 }
@@ -1077,9 +1098,21 @@ private fun QuickActionButton(
 //  DEFAULT STATE  (derives initials/name from the signed-in [User])
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Replace seeded tasks/stats with live Firestore tasks scoped by userId. */
+/**
+ * Replace seeded tasks/stats with live Firestore tasks scoped by userId.
+ * When [live] is empty we still apply — emitting zeroed stats and an empty
+ * task list so the UI reflects reality rather than the dummy seed.
+ */
 private fun HomeUiState.applyLiveTasks(live: List<TaskRecord>): HomeUiState {
-    if (live.isEmpty()) return this
+    if (live.isEmpty()) return copy(
+        tasks          = emptyList(),
+        totalTaskCount = 0,
+        stats          = listOf(
+            StatItem("0", "ACTIVE",     StatAccent.Active),
+            StatItem("0", "DONE TODAY", StatAccent.Done),
+            StatItem("0", "CRITICAL",   StatAccent.Critical),
+        ),
+    )
     // Show up to 3 tasks for "Today's Tasks" — prefer active/in-progress first
     val sorted = live.sortedWith(
         compareBy({ it.status == "Done" }, { it.priority != "Danger" })

@@ -34,6 +34,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.uniwattelektrik.core.theme.AppTheme
 
+// ── Dark-navy palette (matches PremiumBrandFooter so the two read as one band).
+private val NavBgTop      = Color(0xFF142A56)
+private val NavBgBottom   = Color(0xFF0A1633)
+private val NavActive     = Color(0xFF60A5FA)   // electric cyan-blue
+private val NavInactive   = Color(0xFF8A99B8)   // muted slate
+
 /** One tab descriptor used by [AppBottomNavBar]. */
 data class BottomNavItem(
     val key: String,
@@ -68,14 +74,18 @@ fun AppBottomNavBar(
         modifier = modifier
             .fillMaxWidth()
             .height(76.dp)
-            .background(Color.White),
+            .background(
+                Brush.verticalGradient(
+                    listOf(NavBgTop, NavBgBottom),
+                ),
+            ),
     ) {
-        // Hairline top divider for subtle separation from content
+        // Cyan hairline at the top — bridges the dark band into the brand footer above.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(1.dp)
-                .background(Color(0xFFEEF1F5))
+                .background(Color(0x3360A5FA))
                 .align(Alignment.TopCenter),
         )
 
@@ -126,8 +136,8 @@ private fun NavTab(
     modifier: Modifier,
 ) {
     val isSelected = item.key == selectedKey
-    val activeColor   = AppTheme.Brand
-    val inactiveColor = Color(0xFF9AA3B2) // light grey
+    val activeColor   = NavActive
+    val inactiveColor = NavInactive
     val tint by animateColorAsState(
         targetValue = if (isSelected) activeColor else inactiveColor,
         animationSpec = tween(durationMillis = 220),
@@ -145,6 +155,23 @@ private fun NavTab(
             .clickable { onSelected(item.key) },
         contentAlignment = Alignment.Center,
     ) {
+        // Soft cyan radial halo behind the active tab — fades in/out with the
+        // same 220ms curve as the tint animation. Sits behind the icon so
+        // selection reads as ambient lighting, not a hard fill.
+        if (dotAlpha > 0f) {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                activeColor.copy(alpha = 0.22f * dotAlpha),
+                                Color.Transparent,
+                            ),
+                        ),
+                    ),
+            )
+        }
         Column(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,

@@ -260,6 +260,12 @@ fun AdminEmployeesScreen(
                 it.zone.contains(query, ignoreCase = true)
         }
         .toList()
+        // Newest hires first. Falls back to name when joining date is missing
+        // so two new employees with no join date still order deterministically.
+        .sortedWith(
+            compareByDescending<EmployeeRecord> { it.joiningDateMs ?: 0L }
+                .thenBy { it.name.lowercase() }
+        )
 
     Box(modifier = modifier.fillMaxSize().background(appScreenBackground())) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -362,34 +368,14 @@ private fun EmployeesGradientHeader(
     onCategory: (RoleCategory) -> Unit,
     onAdd: () -> Unit,
 ) {
-    com.example.uniwattelektrik.core.components.PremiumHeaderBackground(
-        cornerRadius = 24.dp,
-    ) {
-        Column(
-            modifier = Modifier
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            // Top row: title / add
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Back button hidden — Employees is a top-level tab.
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text  = "Employees",
-                        style = com.example.uniwattelektrik.core.theme.AppTypography.HeaderTitle,
-                    )
-                    Text(
-                        text  = "$activeCount ACTIVE · $onLeaveCount ON LEAVE",
-                        style = com.example.uniwattelektrik.core.theme.AppTypography.HeaderSubtitle,
-                    )
-                }
-                // Plus button removed from header — adding is now exclusively via the bottom-right FAB.
-            }
-
-            // Search bar (rounded, semi-transparent white)
+    com.example.uniwattelektrik.core.components.OperationsHeader(
+        eyebrow  = "TEAM",
+        title    = "Employees",
+        subtitle = "$activeCount active · $onLeaveCount on leave",
+        extras = {
+            // Search bar
             SearchField(query = query, onQuery = onQuery)
-
+            Spacer(Modifier.height(12.dp))
             // Role chips
             Row(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -403,8 +389,8 @@ private fun EmployeesGradientHeader(
                     )
                 }
             }
-        }
-    }
+        },
+    )
 }
 
 @Composable
@@ -954,7 +940,42 @@ internal fun AddEmployeeSheet(
     val haptics = LocalHapticFeedback.current
     val emailLooksValid = email.contains("@") && email.contains(".") &&
             email.length >= 5
-    val phoneLooksValid = phone.filter { it.isDigit() }.length in 7..15
+
+    // Phone validation:
+    //   • 10–15 digits after stripping spaces / dashes / parens
+    //   • Indian mobile numbers (10-digit form OR +91 prefix) must start with 6-9
+    //   • Reject obvious junk like "0000000000" or all-same digits
+    val phoneDigits  = phone.filter { it.isDigit() }
+    val phoneLooksValid = run {
+        if (phoneDigits.length !in 10..15) return@run false
+        if (phoneDigits.toSet().size == 1) return@run false  // 0000000, 1111111…
+        // Compute the "subscriber" part for an Indian-style number: drop the
+        // optional 91 country-code prefix to get the 10-digit subscriber.
+        val subscriber = when {
+            phoneDigits.length == 12 && phoneDigits.startsWith("91") -> phoneDigits.drop(2)
+            phoneDigits.length == 11 && phoneDigits.startsWith("0")  -> phoneDigits.drop(1)
+            else                                                     -> phoneDigits
+        }
+        if (subscriber.length == 10 && subscriber.first() !in '6'..'9') return@run false
+        true
+    }
+
+    // DOB validation:
+    //   • required
+    //   • not in the future
+    //   • employee at least 18 years old
+    //   • not absurdly old (sanity floor: 1900)
+    val nowMs = com.example.uniwattelektrik.platform.nowEpochMillis()
+    val approxYearMs = 365L * 24L * 60L * 60L * 1000L
+    val dobAgeYears  = dobMs?.let { ((nowMs - it).toDouble() / approxYearMs).toInt() }
+    val dobLooksValid = when {
+        dobMs == null                 -> false
+        dobMs!! >= nowMs              -> false   // future date
+        dobAgeYears == null           -> false
+        dobAgeYears < 18              -> false
+        dobAgeYears > 100             -> false
+        else                          -> true
+    }
 
     val nameError = if (submitted && name.isBlank()) "Name is required" else null
     val emailError = when {
@@ -969,8 +990,17 @@ internal fun AddEmployeeSheet(
         else -> null
     }
     val phoneError = when {
-        submitted && phone.isBlank() -> "Phone number is required"
-        submitted && !phoneLooksValid -> "Enter a valid phone number"
+        submitted && phone.isBlank()                  -> "Phone number is required"
+        submitted && phoneDigits.length !in 10..15    -> "Enter 10–15 digits"
+        submitted && phoneDigits.toSet().size == 1    -> "Phone number looks invalid"
+        submitted && !phoneLooksValid                 -> "Enter a valid phone number"
+        else -> null
+    }
+    val dobError = when {
+        submitted && dobMs == null    -> "Date of birth is required"
+        submitted && dobMs!! >= nowMs -> "Date of birth can't be in the future"
+        submitted && dobAgeYears != null && dobAgeYears < 18 -> "Employee must be 18 or older"
+        submitted && dobAgeYears != null && dobAgeYears > 100 -> "Please re-enter date of birth"
         else -> null
     }
     val salaryError = if (submitted && salaryStr.toDoubleOrNull() == null)
@@ -978,8 +1008,9 @@ internal fun AddEmployeeSheet(
 
     val canSubmit =
         name.isNotBlank() &&
-                phone.isNotBlank() &&
-                email.isNotBlank() &&
+                phoneLooksValid &&
+                email.isNotBlank() && emailLooksValid &&
+                dobLooksValid &&
                 (isEdit || password.length >= 6) &&
                 salaryStr.toDoubleOrNull() != null &&
                 !saving
@@ -1098,6 +1129,15 @@ internal fun AddEmployeeSheet(
                             enabled = !saving,
                             onClick = { showDobDate = true },
                         )
+                        if (dobError != null) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text       = dobError,
+                                color      = AppTheme.Danger,
+                                fontSize   = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
                     }
                     Column {
                         FieldLabel("Gender")
@@ -1559,86 +1599,37 @@ fun AddEmployeeHeader(
     title: String = "Add Employee",
     subtitle: String = "NEW HIRE ONBOARDING",
 ) {
-    com.example.uniwattelektrik.core.components.PremiumHeaderBackground(
-        roundedBottom = false,
-    ) {
-        Column(
-            modifier = Modifier
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-
-            /* ── Top row: back · titles · save ──────────────────────────── */
-            Row(verticalAlignment = Alignment.CenterVertically) {
-
-                // Back button — shared GlassBackButton (matches Task Management style)
-                com.example.uniwattelektrik.core.components.GlassBackButton(
-                    onClick = onClose,
-                )
-
-                Spacer(Modifier.width(14.dp))
-
-                // Titles
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        title,
-                        color = Color.White,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = (-0.2).sp,
-                    )
-                    Text(
-                        subtitle,
-                        color = WhiteAlpha70,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 1.6.sp,
-                    )
-                }
-
-                // Save (✓) button — vivid green, dims when disabled
-                val tileBg     = if (saveEnabled) Success else Success.copy(alpha = 0.45f)
-                val tileShadow = if (saveEnabled) Color(0x55119F4A) else Color(0x00000000)
-                Box(
-                    modifier = Modifier
-                        .size(46.dp)
-                        .shadow(
-                            elevation = if (saveEnabled) 10.dp else 0.dp,
-                            shape     = RoundedCornerShape(14.dp),
-                            spotColor = tileShadow,
-                        )
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(tileBg)
-                        .clickable(enabled = saveEnabled && !saving, onClick = onSave),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector        = Icons.Filled.Check,
-                        contentDescription = "Save",
-                        tint               = Color.White,
-                        modifier           = Modifier.size(24.dp),
-                    )
-                }
-            }
-
-            /* ── Breadcrumb pill ────────────────────────────────────────── */
+    com.example.uniwattelektrik.core.components.OperationsHeader(
+        eyebrow  = subtitle,
+        title    = title,
+        subtitle = "From · Employee Management",
+        onBack   = onClose,
+        actions  = {
+            // Save (✓) button — vivid green, dims when disabled.
+            val tileBg     = if (saveEnabled) Success else Success.copy(alpha = 0.45f)
+            val tileShadow = if (saveEnabled) Color(0x55119F4A) else Color(0x00000000)
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(WhiteAlpha20)
-                    .padding(horizontal = 14.dp, vertical = 7.dp),
+                    .size(40.dp)
+                    .shadow(
+                        elevation = if (saveEnabled) 8.dp else 0.dp,
+                        shape     = RoundedCornerShape(12.dp),
+                        spotColor = tileShadow,
+                    )
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(tileBg)
+                    .clickable(enabled = saveEnabled && !saving, onClick = onSave),
+                contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    "←  From  ·  Employee Management",
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = 0.2.sp,
+                Icon(
+                    imageVector        = Icons.Filled.Check,
+                    contentDescription = "Save",
+                    tint               = Color.White,
+                    modifier           = Modifier.size(20.dp),
                 )
             }
-        }
-    }
+        },
+    )
 }
 
 /**

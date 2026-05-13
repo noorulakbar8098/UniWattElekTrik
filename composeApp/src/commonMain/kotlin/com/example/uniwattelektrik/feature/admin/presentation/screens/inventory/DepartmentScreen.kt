@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import com.example.uniwattelektrik.core.components.AppPullToRefresh
 import com.example.uniwattelektrik.core.components.EmptyState
 import com.example.uniwattelektrik.core.components.InventoryScreenHeader
+import com.example.uniwattelektrik.core.components.LoadingOverlay
 import com.example.uniwattelektrik.core.components.PremiumGradientFab
 import com.example.uniwattelektrik.core.components.PremiumHeaderStatusBarColor
 import com.example.uniwattelektrik.core.theme.AppTheme
@@ -77,6 +78,7 @@ fun DepartmentScreen(
     SetStatusBar(color = PremiumHeaderStatusBarColor, darkIcons = false)
 
     val departments by inventoryVm.departments.collectAsState()
+    val actionInProgress by inventoryVm.actionInProgress.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var showAddDialog    by remember { mutableStateOf(false) }
@@ -183,6 +185,8 @@ fun DepartmentScreen(
 
         // ── FAB ──────────────────────────────────────────────────────────────
         PremiumGradientFab(onClick = { showAddDialog = true })
+
+        LoadingOverlay(visible = actionInProgress, message = "Please wait…")
     }
 }
 

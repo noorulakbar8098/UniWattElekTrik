@@ -23,7 +23,8 @@ package com.example.uniwattelektrik.core.components
  *   14. DsGlassButton      — glass-style icon button for gradient headers
  *   15. DsVerticalDivider  — thin vertical divider for stat rows
  *   16. DsTaskCard         — universal premium task card (list + kanban)
- *   17. DsEmptyState       — illustrated empty state
+ *   17. DsEmptyState       — illustrated empty state (filter / no-match)
+ *   17b.DsAllCaughtUpEmptyState — premium card empty state (no items at all)
  *   18. DsLoadingCard      — shimmer skeleton for a task card
  *
  * Design token usage:
@@ -35,6 +36,7 @@ package com.example.uniwattelektrik.core.components
  */
 
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -56,6 +58,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -63,6 +66,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
@@ -77,6 +81,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -265,17 +270,51 @@ fun DsSectionHeader(
  */
 @Composable
 fun DsStatusChip(
-    label    : String,
-    tint     : Color,
-    background: Color,
-    modifier : Modifier = Modifier,
+    label         : String,
+    tint          : Color,
+    background    : Color,
+    modifier      : Modifier = Modifier,
+    /**
+     * When non-null, renders a 6 dp filled dot before the label using this
+     * colour. Use for "status with severity" pills (e.g. "5 / 22 days" with a
+     * green health dot, or "Live · 12" badges).
+     */
+    leadingDotColor: Color? = null,
 ) {
-    Box(
-        modifier = modifier
-            .clip(AppShapes.small)
+    val shape = if (leadingDotColor != null) AppShapes.pill else AppShapes.small
+    // Subtle top-light gradient: slightly brighter at the top, fading into
+    // the supplied background. Reads as a soft glass finish without changing
+    // the perceived tint at a glance.
+    val surfaceBrush = Brush.verticalGradient(
+        colors = listOf(
+            Color.White.copy(alpha = 0.30f),
+            background,
+        ),
+    )
+    Row(
+        modifier              = modifier
+            .shadow(
+                elevation    = 1.dp,
+                shape        = shape,
+                ambientColor = tint.copy(alpha = 0.12f),
+                spotColor    = tint.copy(alpha = 0.18f),
+            )
+            .clip(shape)
             .background(background)
+            .background(surfaceBrush)
+            .border(0.5.dp, tint.copy(alpha = 0.20f), shape)
             .padding(horizontal = AppTheme.SpSm, vertical = AppTheme.SpXs),
+        verticalAlignment     = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        if (leadingDotColor != null) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(leadingDotColor),
+            )
+        }
         Text(
             text  = label,
             style = AppTypography.labelSmall.copy(color = tint),
@@ -319,6 +358,64 @@ fun DsPriorityChip(
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ *  5b. DsGlassChip — Translucent pill for gradient header surfaces
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Glassmorphic pill — white-on-brand pattern used inside the gradient
+ * `PremiumHeaderBackground` headers (employee detail, task detail, etc.).
+ * Drop-in replacement for the inline `Row { clip(pill).background(white@0.18) }`
+ * pattern. Supports an optional inline value (e.g. "EMP-1234 · ACTIVE")
+ * rendered with a soft dot separator.
+ *
+ * Use [DsStatusChip] for chips on white card surfaces — this variant exists
+ * specifically for coloured gradient backgrounds where contrast comes from
+ * white text instead of a tinted background.
+ */
+@Composable
+fun DsGlassChip(
+    label      : String,
+    modifier   : Modifier = Modifier,
+    trailing   : String? = null,
+    bgAlpha    : Float = 0.18f,
+    borderAlpha: Float = 0.25f,
+) {
+    Row(
+        modifier              = modifier
+            .clip(AppShapes.pill)
+            .background(Color.White.copy(alpha = bgAlpha))
+            .border(1.dp, Color.White.copy(alpha = borderAlpha), AppShapes.pill)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment     = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text  = label,
+            style = AppTypography.labelSmall.copy(
+                color         = Color.White,
+                fontWeight    = FontWeight.Bold,
+                letterSpacing = 1.2.sp,
+            ),
+        )
+        if (!trailing.isNullOrBlank()) {
+            Text(
+                text     = "•",
+                color    = Color.White.copy(alpha = 0.6f),
+                fontSize = 11.sp,
+            )
+            Text(
+                text  = trailing,
+                style = AppTypography.labelSmall.copy(
+                    color         = Color.White,
+                    fontWeight    = FontWeight.Bold,
+                    letterSpacing = 1.2.sp,
+                ),
+            )
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  *  6. DsCodeChip — Item ID chip
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -341,6 +438,78 @@ fun DsCodeChip(
         Text(
             text  = code,
             style = AppTypography.labelSmall.copy(color = tint, letterSpacing = 0.6.sp),
+        )
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  6b. DsCheckbox — Rounded-square brand-blue checkbox with white tick
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Branded checkbox replacement for `androidx.compose.material3.Checkbox`.
+ *
+ * Visual:
+ *  • Unchecked → white square (8 dp radius) with a 1.5 dp `Ink100` border
+ *  • Checked   → solid brand-blue square with a white tick icon, soft shadow
+ *  • State transitions are crossfaded so taps feel responsive without
+ *    being jumpy.
+ *
+ * Use anywhere in the app instead of the Material default — keeps
+ * checklists, settings, and form fields visually consistent.
+ */
+@Composable
+fun DsCheckbox(
+    checked  : Boolean,
+    onChange : (Boolean) -> Unit,
+    modifier : Modifier = Modifier,
+    size     : Dp = 22.dp,
+    enabled  : Boolean = true,
+) {
+    val shape = RoundedCornerShape(size.value.times(0.30f).dp)
+    val bg by animateColorAsState(
+        targetValue   = if (checked) AppTheme.Brand else Color.White,
+        animationSpec = tween(durationMillis = 160),
+        label         = "dsCheckboxBg",
+    )
+    val borderColor by animateColorAsState(
+        targetValue   = if (checked) AppTheme.Brand else AppTheme.Ink100,
+        animationSpec = tween(durationMillis = 160),
+        label         = "dsCheckboxBorder",
+    )
+    Box(
+        modifier         = modifier
+            .size(size)
+            .then(
+                if (checked)
+                    Modifier.shadow(2.dp, shape, spotColor = AppTheme.Brand.copy(alpha = 0.40f))
+                else Modifier,
+            )
+            .clip(shape)
+            .background(bg)
+            .border(1.5.dp, borderColor, shape)
+            .clickable(enabled = enabled) { onChange(!checked) },
+        contentAlignment = Alignment.Center,
+    ) {
+        // Tick icon — fades + scales in when checked.
+        val tickAlpha by animateFloatAsState(
+            targetValue   = if (checked) 1f else 0f,
+            animationSpec = tween(durationMillis = 160),
+            label         = "dsCheckboxTickAlpha",
+        )
+        val tickScale by animateFloatAsState(
+            targetValue   = if (checked) 1f else 0.5f,
+            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+            label         = "dsCheckboxTickScale",
+        )
+        Icon(
+            imageVector        = Icons.Filled.Check,
+            contentDescription = null,
+            tint               = Color.White,
+            modifier           = Modifier
+                .size(size.value.times(0.72f).dp)
+                .scale(tickScale)
+                .alpha(tickAlpha),
         )
     }
 }
@@ -425,6 +594,62 @@ fun DsAvatarBubble(
     }
 }
 
+/**
+ * Horizontally overlapping avatar stack — used wherever a task has multiple
+ * assignees. Renders up to [maxVisible] gradient avatars (each derived
+ * deterministically via [dsAvatarGradient]) with a 35% horizontal overlap,
+ * then a `+N` pill if there are more.
+ *
+ * @param initialsList per-assignee 2-letter initials, in render order.
+ * @param size         avatar diameter (defaults to AvatarSm = 32 dp).
+ * @param maxVisible   how many avatars to draw before collapsing to "+N".
+ * @param overlap      fraction of the avatar that overlaps (0.0 – 0.6).
+ */
+@Composable
+fun DsAvatarStack(
+    initialsList: List<String>,
+    modifier    : Modifier = Modifier,
+    size        : Dp   = AppTheme.AvatarSm,
+    maxVisible  : Int  = 3,
+    overlap     : Float = 0.35f,
+) {
+    if (initialsList.isEmpty()) return
+    val visible = initialsList.take(maxVisible)
+    val overflow = initialsList.size - visible.size
+    val overlapDp = size * overlap
+
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        visible.forEachIndexed { i, initials ->
+            DsAvatarBubble(
+                initials = initials,
+                size     = size,
+                modifier = if (i == 0) Modifier else Modifier.offset(x = -overlapDp * i),
+            )
+        }
+        if (overflow > 0) {
+            // "+N" pill — circular tile with neutral surface, sized to match.
+            Box(
+                modifier = Modifier
+                    .offset(x = -overlapDp * visible.size)
+                    .size(size)
+                    .clip(CircleShape)
+                    .background(AppTheme.Ink50)
+                    .border(1.5.dp, Color.White, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text  = "+$overflow",
+                    style = AppTypography.labelSmall.copy(
+                        color      = AppTheme.Ink700,
+                        fontSize   = (size.value * 0.32f).sp,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                )
+            }
+        }
+    }
+}
+
 /** Returns a deterministic two-stop gradient palette indexed by [initials]. */
 fun dsAvatarGradient(initials: String): List<Color> {
     val palettes = listOf(
@@ -456,15 +681,35 @@ fun DsFilterChip(
     onClick : () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Selected state: subtle vertical gradient (slightly lighter at the top,
+    // tint at the bottom) gives the chip the ambient "top-light" finish that
+    // matches the rest of the design system. Glow shadow tinted by the chip
+    // colour so each filter reads as illuminated, not flat-filled.
+    val selectedBrush = if (selected) {
+        Brush.verticalGradient(
+            colors = listOf(
+                tint.copy(alpha = 0.92f),
+                tint,
+            ),
+        )
+    } else null
     Box(
         modifier = modifier
             .clip(AppShapes.medium)
-            .background(if (selected) tint else Color.Transparent)
-            .border(1.dp, if (selected) Color.Transparent else AppTheme.Ink100, AppShapes.medium)
             .then(
-                if (selected) Modifier.shadow(AppElevation.xs, AppShapes.medium, spotColor = tint.copy(alpha = 0.35f))
-                else Modifier,
+                if (selected) Modifier.shadow(
+                    elevation    = 6.dp,
+                    shape        = AppShapes.medium,
+                    ambientColor = tint.copy(alpha = 0.30f),
+                    spotColor    = tint.copy(alpha = 0.45f),
+                ) else Modifier,
             )
+            .clip(AppShapes.medium)
+            .then(
+                if (selectedBrush != null) Modifier.background(selectedBrush)
+                else Modifier.background(Color.Transparent)
+            )
+            .border(1.dp, if (selected) Color.White.copy(alpha = 0.18f) else AppTheme.Ink100, AppShapes.medium)
             .clickable(onClick = onClick)
             .padding(horizontal = AppTheme.SpMd, vertical = AppTheme.SpSm),
     ) {
@@ -507,19 +752,51 @@ fun DsGlassSearchBar(
     modifier    : Modifier = Modifier,
     onDark      : Boolean = true,
 ) {
-    val bg     = if (onDark) Color.White.copy(alpha = 0.20f) else AppTheme.Surface
-    val border = if (onDark) Color.White.copy(alpha = 0.30f) else AppTheme.Ink100
-    val iconTint = if (onDark) Color.White.copy(alpha = 0.80f) else AppTheme.Ink300
+    // Glassmorphic surface — on dark headers, layer a top-light gradient on
+    // top of a translucent white fill so the bar reads as frosted glass.
+    // On light pages, layer a brand-tinted ambient glow so the search bar
+    // still feels lifted off the page mesh.
+    val baseBg = if (onDark) Color.White.copy(alpha = 0.14f) else AppTheme.Surface
+    val borderColor = if (onDark) Color.White.copy(alpha = 0.22f)
+                      else AppTheme.Brand.copy(alpha = 0.18f)
+    val iconTint = if (onDark) Color.White.copy(alpha = 0.85f) else AppTheme.Ink500
     val textColor = if (onDark) Color.White else AppTheme.Ink900
     val hintColor = if (onDark) Color.White.copy(alpha = 0.55f) else AppTheme.Ink300
+
+    val surfaceBrush = if (onDark) {
+        Brush.verticalGradient(
+            colors = listOf(
+                Color.White.copy(alpha = 0.20f),
+                Color.White.copy(alpha = 0.06f),
+            ),
+        )
+    } else {
+        Brush.verticalGradient(
+            colors = listOf(
+                Color.White,
+                Color(0xFFF7FAFE),
+            ),
+        )
+    }
 
     Row(
         modifier          = modifier
             .fillMaxWidth()
             .height(AppTheme.SearchBarHeight)
+            // Brand-tinted glow only on the light variant — keeps the dark
+            // header bar from glowing against the dark surface.
+            .then(
+                if (!onDark) Modifier.shadow(
+                    elevation    = 2.dp,
+                    shape        = AppShapes.large,
+                    ambientColor = AppTheme.Brand.copy(alpha = 0.08f),
+                    spotColor    = AppTheme.Brand.copy(alpha = 0.14f),
+                ) else Modifier,
+            )
             .clip(AppShapes.large)
-            .background(bg)
-            .border(1.dp, border, AppShapes.large)
+            .background(baseBg)
+            .background(surfaceBrush)
+            .border(1.dp, borderColor, AppShapes.large)
             .padding(horizontal = AppTheme.SpLg),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -936,6 +1213,128 @@ fun DsEmptyState(
                 textAlign = TextAlign.Center,
                 modifier  = Modifier.fillMaxWidth(),
             )
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  17b. DsAllCaughtUpEmptyState — Premium illustrated empty state card
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Rich, card-style empty state used when a list has *no items at all*
+ * (as opposed to a filter producing zero matches — that should still use
+ * [DsEmptyState]).
+ *
+ * Layout matches the design reference:
+ *  - "EMPTY" pill chip top-left
+ *  - Centred rounded-square icon tile with brand tint
+ *  - Bold title with optional celebratory emoji suffix
+ *  - Muted body copy
+ *  - Optional gradient CTA at bottom (e.g. "View tomorrow")
+ *
+ * Pass `actionLabel = null` to hide the CTA entirely.
+ */
+@Composable
+fun DsAllCaughtUpEmptyState(
+    title       : String,
+    body        : String,
+    modifier    : Modifier = Modifier,
+    pillLabel   : String = "EMPTY",
+    actionLabel : String? = null,
+    onAction    : (() -> Unit)? = null,
+) {
+    Box(
+        modifier         = modifier
+            .fillMaxSize()
+            .padding(horizontal = AppTheme.SpLg, vertical = AppTheme.SpXl),
+        contentAlignment = Alignment.Center,
+    ) {
+        DsCard(contentPadding = AppTheme.SpXl) {
+            Column(
+                modifier            = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                // ─── Top-left "✨ EMPTY" pill ────────────────────────────────
+                Row(
+                    modifier          = Modifier
+                        .align(Alignment.Start)
+                        .clip(AppShapes.pill)
+                        .background(AppTheme.Brand50)
+                        .padding(horizontal = AppTheme.SpMd, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("✨", fontSize = 12.sp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text  = pillLabel,
+                        style = AppTypography.labelSmall.copy(
+                            color         = AppTheme.Brand,
+                            fontWeight    = FontWeight.SemiBold,
+                            letterSpacing = 1.4.sp,
+                        ),
+                    )
+                }
+
+                Spacer(Modifier.height(AppTheme.SpXl))
+
+                // ─── Centred rounded-square icon tile ─────────────────────
+                Box(
+                    modifier         = Modifier
+                        .size(96.dp)
+                        .clip(AppShapes.extraLarge)
+                        .background(AppTheme.Brand50),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier         = Modifier
+                            .size(36.dp)
+                            .clip(AppShapes.small)
+                            .background(Color.Transparent)
+                            .border(2.dp, AppTheme.Brand, AppShapes.small),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(14.dp)
+                                .height(2.dp)
+                                .clip(AppShapes.extraSmall)
+                                .background(AppTheme.Brand),
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(AppTheme.SpXl))
+
+                // ─── Title ────────────────────────────────────────────────
+                Text(
+                    text      = title,
+                    style     = AppTypography.titleLarge.copy(
+                        color      = AppTheme.Ink900,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                    textAlign = TextAlign.Center,
+                )
+
+                Spacer(Modifier.height(AppTheme.SpSm))
+
+                // ─── Body ─────────────────────────────────────────────────
+                Text(
+                    text      = body,
+                    style     = AppTypography.bodyMedium.copy(color = AppTheme.Ink500),
+                    textAlign = TextAlign.Center,
+                    modifier  = Modifier.fillMaxWidth(),
+                )
+
+                // ─── Optional CTA ─────────────────────────────────────────
+                if (actionLabel != null && onAction != null) {
+                    Spacer(Modifier.height(AppTheme.SpXl))
+                    DsActionButton(
+                        label   = actionLabel,
+                        onClick = onAction,
+                    )
+                }
+            }
         }
     }
 }

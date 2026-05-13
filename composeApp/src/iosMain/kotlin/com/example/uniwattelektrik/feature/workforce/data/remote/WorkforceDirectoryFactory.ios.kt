@@ -71,20 +71,31 @@ private class StubWorkforceDirectory : WorkforceDirectory {
         checklist: List<ChecklistItem>, attachments: List<String>,
         address: String, latitude: Double?, longitude: Double?,
         dueDate: Long?, ownerAdminName: String, assigneeName: String,
+        notifyAssignee: Boolean,
+        assigneeIds: List<String>,
+        assigneeNames: List<String>,
     ): TaskRecord = TaskRecord(
         id = "stub", adminId = adminId, userId = userId,
         title = title, description = description,
         location = location, time = time, day = day,
         priority = priority, status = "Todo",
         ownerAdminId = adminId, ownerAdminName = ownerAdminName,
-        assigneeName = assigneeName, dueDate = dueDate,
+        assigneeName = assigneeName,
+        assignedUserIds = assigneeIds,
+        assigneeNames = assigneeNames,
+        dueDate = dueDate,
         departmentId = departmentId, departmentName = departmentName,
         equipmentId = equipmentId, equipmentName = equipmentName,
         checklist = checklist, attachments = attachments,
         address = address, latitude = latitude, longitude = longitude,
+        notifyAssignee = notifyAssignee,
     )
     override suspend fun acceptTask(taskId: String, lat: Double?, lon: Double?): TaskRecord =
-        TaskRecord("stub", "", null, "", "", "", "", "", "InProgress")
+        TaskRecord(
+            id = "stub", adminId = "", userId = null,
+            title = "", location = "", time = "", day = "",
+            priority = "", status = "InProgress",
+        )
     override suspend fun updateTask(
         taskId: String, adminId: String, userId: String?, title: String,
         location: String, time: String, day: String, priority: String,
@@ -94,32 +105,65 @@ private class StubWorkforceDirectory : WorkforceDirectory {
         checklist: List<ChecklistItem>, attachments: List<String>,
         address: String, latitude: Double?, longitude: Double?,
         dueDate: Long?, assigneeName: String,
+        notifyAssignee: Boolean,
+        assigneeIds: List<String>,
+        assigneeNames: List<String>,
     ): TaskRecord = TaskRecord(
         id = taskId, adminId = adminId, userId = userId,
         title = title, description = description,
         location = location, time = time, day = day,
         priority = priority, status = "Todo",
-        assigneeName = assigneeName, dueDate = dueDate,
+        assigneeName = assigneeName,
+        assignedUserIds = assigneeIds,
+        assigneeNames = assigneeNames,
+        dueDate = dueDate,
         departmentId = departmentId, departmentName = departmentName,
         equipmentId = equipmentId, equipmentName = equipmentName,
         checklist = checklist, attachments = attachments,
         address = address, latitude = latitude, longitude = longitude,
+        notifyAssignee = notifyAssignee,
+    )
+    override suspend fun reassignTask(
+        taskId: String, adminId: String,
+        newAssigneeIds: List<String>, newAssigneeNames: List<String>,
+    ): TaskRecord = TaskRecord(
+        id = taskId, adminId = adminId,
+        userId = newAssigneeIds.firstOrNull(),
+        title = "", location = "", time = "", day = "",
+        priority = "", status = "InReview",
+        assigneeName = newAssigneeNames.firstOrNull().orEmpty(),
+        assignedUserIds = newAssigneeIds,
+        assigneeNames = newAssigneeNames,
     )
     override fun observeTaskNotes(taskId: String): Flow<List<TaskNote>> = flowOf(emptyList())
     override suspend fun completeTaskWithSignoff(
-        adminId: String, taskId: String, assignedUserId: String,
+        adminId: String, taskId: String, assignedUserId: String?,
         signoffDescription: String, downtimeMinutes: Int, rca: String,
-        materialsUsed: List<MaterialUsedItem>, startTimeMs: Long, endTimeMs: Long,
-    ): TaskRecord = TaskRecord(taskId, adminId)
+        materialsUsed: List<MaterialUsedItem>, startTimeMs: Long?, endTimeMs: Long,
+    ): TaskRecord = TaskRecord(
+        id = taskId, adminId = adminId, userId = assignedUserId,
+        title = "", location = "", time = "", day = "",
+        priority = "", status = "Done",
+    )
 
     override suspend fun addTaskNote(
         taskId: String, authorId: String, authorName: String, role: String, message: String,
-    ): TaskNote = TaskNote("stub", taskId, authorId, authorName, role, message, 0L)
+        voiceUrl: String?, voiceDurationMs: Long?,
+    ): TaskNote = TaskNote(
+        id = "stub", taskId = taskId, authorId = authorId, authorName = authorName,
+        role = role, message = message, createdAtMs = 0L,
+        voiceUrl = voiceUrl, voiceDurationMs = voiceDurationMs,
+    )
     override suspend fun updateTaskStatus(
         adminId: String, taskId: String, assignedUserId: String?, newStatus: String,
-    ): TaskRecord = TaskRecord("stub", adminId, assignedUserId, "", "", "", "", "", "Todo")
+    ): TaskRecord = TaskRecord(
+        id = "stub", adminId = adminId, userId = assignedUserId,
+        title = "", location = "", time = "", day = "",
+        priority = "", status = newStatus,
+    )
     override suspend fun setChecklistItemDone(taskId: String, index: Int, done: Boolean) { /* no-op */ }
     override suspend fun uploadTaskAttachment(adminId: String, contentUri: String): String = ""
+    override suspend fun uploadVoiceNote(adminId: String, contentUri: String): String = ""
     override suspend fun updateTaskAttachments(taskId: String, urls: List<String>) { /* no-op */ }
     override suspend fun updateEmployeePhoto(adminId: String, employeeId: String, contentUri: String): String = ""
 
@@ -128,6 +172,9 @@ private class StubWorkforceDirectory : WorkforceDirectory {
         adminId: String, name: String, type: String, price: Double, quantity: Int,
     ): InventoryRecord = InventoryRecord("stub", name, type, price, quantity)
     override fun observeInventoryTransactions(adminId: String): Flow<List<InventoryTransaction>> = flowOf(emptyList())
+    override fun observeMonthlyStockSnapshot(
+        adminId: String, year: Int, month: Int,
+    ): Flow<MonthlyStockSnapshot?> = flowOf(null)
     override suspend fun addInventoryTransaction(
         adminId: String, userId: String, itemId: String, itemName: String, type: String, quantity: Int,
     ): InventoryTransaction = InventoryTransaction("stub", adminId, userId, itemId, itemName, type, quantity)
@@ -190,6 +237,22 @@ private class StubWorkforceDirectory : WorkforceDirectory {
     override suspend fun deleteAllData(adminId: String) { /* no-op */ }
     override suspend fun updateEmployeePermission(adminId: String, employeeId: String, permission: String) { /* no-op */ }
     override suspend fun updateEmployeeStatus(adminId: String, employeeId: String, status: String) { /* no-op */ }
+
+    // ─── Leave requests ───────────────────────────────────────────────────
+    override fun observeLeaveRequestsForAdmin(adminId: String): Flow<List<LeaveRecord>> = flowOf(emptyList())
+    override fun observeLeaveRequestsForUser(userId: String): Flow<List<LeaveRecord>> = flowOf(emptyList())
+    override suspend fun submitLeaveRequest(
+        adminId: String, userId: String, employeeName: String, department: String,
+        leaveType: String, fromDateMs: Long, toDateMs: Long, totalDays: Int, reason: String,
+    ): LeaveRecord = LeaveRecord(
+        id = "stub", userId = userId, adminId = adminId,
+        employeeName = employeeName, department = department,
+        leaveType = leaveType, fromDateMs = fromDateMs, toDateMs = toDateMs,
+        totalDays = totalDays, reason = reason, status = "pending",
+    )
+    override suspend fun updateLeaveStatus(
+        leaveId: String, adminId: String, userId: String, newStatus: String, rejectionReason: String,
+    ) { /* no-op */ }
 }
 
 actual object WorkforceDirectoryFactory {

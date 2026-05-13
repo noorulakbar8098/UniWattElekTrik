@@ -1,5 +1,7 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens
 
+import com.example.uniwattelektrik.core.components.ToastController
+import com.example.uniwattelektrik.core.components.LoadingOverlay
 import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
 
 import com.example.uniwattelektrik.core.theme.appScreenBackground
@@ -7,6 +9,7 @@ import com.example.uniwattelektrik.core.theme.AppShapes
 import com.example.uniwattelektrik.core.theme.AppTheme
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -93,6 +96,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeRecord
+import com.example.uniwattelektrik.feature.workforce.data.remote.allAssigneeIds
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
 import com.example.uniwattelektrik.platform.nowEpochMillis
 import kotlinx.datetime.Instant
@@ -159,6 +163,7 @@ fun NewTaskScreen(
     val departments by inventoryVm.departments.collectAsStateWithLifecycle()
     val equipmentAll by inventoryVm.equipment.collectAsStateWithLifecycle()
     val liveTasks by workforceVm.tasks.collectAsStateWithLifecycle()
+    val actionInProgress by workforceVm.actionInProgress.collectAsStateWithLifecycle()
     val isEditing = editTaskId != null
     val editing = remember(editTaskId, liveTasks) {
         editTaskId?.let { id -> liveTasks.firstOrNull { it.id == id } }
@@ -195,26 +200,42 @@ fun NewTaskScreen(
     var resolvedLat    by remember { mutableStateOf<Double?>(null) }
     var resolvedLng    by remember { mutableStateOf<Double?>(null) }
     var geocoding      by remember { mutableStateOf(false) }
+    var addressSuggestions by remember {
+        mutableStateOf<List<com.example.uniwattelektrik.core.platform.AddressSuggestion>>(emptyList())
+    }
+    // Suppressed once the user picks a suggestion — prevents the dropdown
+    // re-opening as we write the chosen label back into the field.
+    var suggestionsSuppressed by remember { mutableStateOf(false) }
     val geocoder       = remember { com.example.uniwattelektrik.core.platform.createAddressGeocoder() }
 
-    // Debounced geocode on address change.
+    // Debounced geocode + suggestions on address change.
     androidx.compose.runtime.LaunchedEffect(location) {
         val query = location.trim()
-        if (query.length < 4) {
+        if (query.length < 3) {
             resolvedLat = null
             resolvedLng = null
             geocoding   = false
+            addressSuggestions = emptyList()
             return@LaunchedEffect
         }
-        kotlinx.coroutines.delay(600)
+        kotlinx.coroutines.delay(400)
         geocoding = true
-        val result = geocoder.geocode(query)
-        if (result != null) {
-            resolvedLat = result.latitude
-            resolvedLng = result.longitude
+        // Native Geocoder.getFromLocationName is fast enough that running
+        // suggest + geocode sequentially is cheap and avoids the extra
+        // coroutineScope/async imports.
+        val suggestions = geocoder.suggest(query, limit = 5)
+        addressSuggestions = if (suggestionsSuppressed) emptyList() else suggestions
+        // Prefer the first suggestion's lat/lng when we have one — saves a
+        // second geocode round trip. Fall back to an explicit geocode only
+        // when no suggestions came back.
+        val first = suggestions.firstOrNull()
+        if (first != null) {
+            resolvedLat = first.latitude
+            resolvedLng = first.longitude
         } else {
-            resolvedLat = null
-            resolvedLng = null
+            val result = if (query.length >= 4) geocoder.geocode(query) else null
+            resolvedLat = result?.latitude
+            resolvedLng = result?.longitude
         }
         geocoding = false
     }
@@ -286,9 +307,13 @@ fun NewTaskScreen(
         resolvedLng = src.longitude
         selectedDeptId  = src.departmentId.takeIf { it.isNotBlank() }
         selectedEquipId = src.equipmentId.takeIf { it.isNotBlank() }
-        if (src.userId != null) {
+        // Prefill the multi-assignee selection from whichever shape the task
+        // was written in (legacy single field or the new array). Helper
+        // [allAssigneeIds] merges both for us.
+        val prefillIds = src.allAssigneeIds()
+        if (prefillIds.isNotEmpty()) {
             selectedAssignees.clear()
-            selectedAssignees.add(src.userId)
+            selectedAssignees.addAll(prefillIds)
         }
         checklist.clear()
         checklist.addAll(src.checklist.map { it.text })
@@ -303,8 +328,10 @@ fun NewTaskScreen(
         prefilled = true
     }
 
+    // Auto-assign provides its own assignee at submit time, so a manual chip
+    // selection isn't required when that mode is on.
     val canSubmit = title.isNotBlank() && location.isNotBlank() &&
-                    selectedAssignees.isNotEmpty()
+                    (selectedAssignees.isNotEmpty() || autoAssign)
 
     val startTimeStr = formatHHmm(startHour, startMinute)
     val endTimeStr   = formatHHmm(endHour, endMinute)
@@ -369,7 +396,36 @@ fun NewTaskScreen(
                     tint = Purple, bg = PurpleBg,
                     expandedMap = expanded,
                 ) {
-                    FieldLabel("Assign to (multi-select)", required = true)
+                    // Lock the assignee chooser entirely when editing a
+                    // completed task — admins shouldn't be silently re-routing
+                    // history. The rest of the form (notes, attachments,
+                    // checklist) remains editable.
+                    val assigneeLocked = isEditing && editing?.status == "Done"
+                    // Auto-assign toggle — when on, the form picks the employee
+                    // with the fewest active tasks at submit time, optionally
+                    // honouring the Role / Team filters below as a candidate
+                    // pool. Manual chips are greyed out so the admin sees
+                    // the system is making the call.
+                    ToggleRow(
+                        title    = "Auto-assign (load-balanced)",
+                        subtitle = "Pick the available employee with the fewest active tasks",
+                        checked  = autoAssign,
+                        onChange = {
+                            if (assigneeLocked) return@ToggleRow
+                            autoAssign = it; if (it) selectedAssignees.clear()
+                        },
+                        tint     = Purple,
+                    )
+                    Spacer(Modifier.height(10.dp))
+
+                    FieldLabel("Assign to (multi-select)", required = !autoAssign)
+                    if (assigneeLocked) {
+                        Text(
+                            "Assignees are locked because this task is already completed.",
+                            color = InkMuted, fontSize = 12.sp,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
                     if (employees.isEmpty()) {
                         Text("No employees yet — add one in Team first.",
                              color = InkMuted, fontSize = 13.sp)
@@ -378,8 +434,9 @@ fun NewTaskScreen(
                             items(employees, key = { it.id }) { emp ->
                                 AssigneeChip(
                                     employee = emp,
-                                    selected = selectedAssignees.contains(emp.id),
+                                    selected = !autoAssign && selectedAssignees.contains(emp.id),
                                     onClick  = {
+                                        if (assigneeLocked || autoAssign) return@AssigneeChip
                                         if (selectedAssignees.contains(emp.id))
                                             selectedAssignees.remove(emp.id)
                                         else selectedAssignees.add(emp.id)
@@ -541,11 +598,76 @@ fun NewTaskScreen(
                 ) {
                     FieldLabel("Address", required = true)
                     DottedField(
-                        value = location, onChange = { location = it },
+                        value = location,
+                        onChange = {
+                            location = it
+                            // User is typing again — re-open suggestions if any.
+                            suggestionsSuppressed = false
+                        },
                         leadingIcon = Icons.Filled.LocationOn,
                         leadingTint = Danger, leadingBg = DangerBg,
                         placeholder = "Site address or landmark",
                     )
+
+                    // Suggestions dropdown — appears below the field while the
+                    // user is typing. Tapping a row fills the field, pins the
+                    // lat/lng, and dismisses further suggestions.
+                    AnimatedVisibility(
+                        visible = addressSuggestions.isNotEmpty(),
+                        enter   = expandVertically() + fadeIn(),
+                        exit    = shrinkVertically() + fadeOut(),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 6.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(CardBg)
+                                .border(1.dp, DividerSoft, RoundedCornerShape(14.dp)),
+                        ) {
+                            addressSuggestions.forEachIndexed { i, s ->
+                                if (i > 0) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(1.dp)
+                                            .background(DividerSoft),
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            // Apply suggestion + suppress
+                                            // further dropdown until the user
+                                            // types again.
+                                            location              = s.label
+                                            resolvedLat           = s.latitude
+                                            resolvedLng           = s.longitude
+                                            suggestionsSuppressed = true
+                                            addressSuggestions    = emptyList()
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        Icons.Filled.LocationOn,
+                                        contentDescription = null,
+                                        tint = Danger,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        s.label,
+                                        color    = InkPrimary,
+                                        fontSize = 13.sp,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     Spacer(Modifier.height(8.dp))
                     val statusText = when {
@@ -633,16 +755,25 @@ fun NewTaskScreen(
 
                     Spacer(Modifier.height(16.dp))
                     FieldLabel("Checklist")
-                    if (checklist.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Smoothly expand / collapse the items column so adding the
+                    // first item or removing the last one doesn't jump.
+                    AnimatedVisibility(
+                        visible = checklist.isNotEmpty(),
+                        enter   = expandVertically() + fadeIn(),
+                        exit    = shrinkVertically() + fadeOut(),
+                    ) {
+                        Column(
+                            modifier            = Modifier.animateContentSize(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             checklist.forEachIndexed { idx, item ->
                                 ChecklistRow(
                                     text = item,
                                     onRemove = { checklist.removeAt(idx) },
                                 )
                             }
+                            Spacer(Modifier.height(10.dp))
                         }
-                        Spacer(Modifier.height(10.dp))
                     }
                     AddItemRow(
                         value = newChecklist,
@@ -705,8 +836,61 @@ fun NewTaskScreen(
                     val dueDateMs: Long? = endDateMs?.let { day ->
                         day + (endHour * 3600_000L) + (endMinute * 60_000L)
                     }
-                    val assigneeId = selectedAssignees.firstOrNull()
+                    // ── Auto-assign: pick the employee with the fewest active
+                    // tasks. Ties broken by zone match (preferring the task's
+                    // team filter), then alphabetical name for determinism. ──
+                    val resolvedAssigneeId: String? = if (autoAssign) {
+                        val activeEmps = employees.filter { it.deletedAt == null && it.status != "Inactive" }
+                        val pool = activeEmps.filter { emp ->
+                            (roleFilter == "Any" || emp.role.contains(roleFilter, ignoreCase = true))
+                                && (teamFilter == "All teams" || emp.zone.equals(teamFilter, ignoreCase = true))
+                        }.ifEmpty { activeEmps }   // fall back to all-active if filters wipe the pool
+                        val openCountByUser = liveTasks
+                            .filter { it.status != "Done" }
+                            .flatMap { it.allAssigneeIds() }
+                            .groupingBy { it }
+                            .eachCount()
+                        pool.minWithOrNull(
+                            compareBy<com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeRecord> {
+                                openCountByUser[it.id] ?: 0
+                            }.thenBy {
+                                // Same-zone tiebreak when team filter is set explicitly.
+                                if (teamFilter != "All teams" && it.zone.equals(teamFilter, ignoreCase = true)) 0 else 1
+                            }.thenBy { it.name.lowercase() }
+                        )?.id
+                    } else {
+                        selectedAssignees.firstOrNull()
+                    }
+                    val assigneeId   = resolvedAssigneeId
                     val assigneeName = employees.firstOrNull { it.id == assigneeId }?.name.orEmpty()
+                    // Multi-assignee fan-out: when the admin manually picked
+                    // people we send the whole list; for auto-assign we send
+                    // just the resolved single id. Names align 1:1.
+                    val multiAssigneeIds: List<String> = when {
+                        autoAssign -> listOfNotNull(assigneeId)
+                        else       -> selectedAssignees.toList()
+                    }
+                    val multiAssigneeNames: List<String> = multiAssigneeIds.map { uid ->
+                        employees.firstOrNull { it.id == uid }?.name.orEmpty()
+                    }
+                    val tName = title.trim()
+                    val toName = assigneeName.takeIf { it.isNotBlank() }
+                    val afterAction: (Result<Unit>) -> Unit = { result ->
+                        if (result.isSuccess) {
+                            if (isEditing) {
+                                ToastController.success(
+                                    title = "Task updated",
+                                    body  = if (toName != null) "$tName · Assigned to $toName" else tName,
+                                )
+                            } else {
+                                ToastController.success(
+                                    title = "Task created",
+                                    body  = if (toName != null) "Assigned to $toName · Due $endDayLbl $endTimeStr" else tName,
+                                )
+                            }
+                            onCreated()
+                        }
+                    }
                     if (isEditing && editTaskId != null) {
                         workforceVm.updateTask(
                             taskId         = editTaskId,
@@ -731,6 +915,10 @@ fun NewTaskScreen(
                             longitude      = resolvedLng,
                             dueDate        = dueDateMs,
                             assigneeName   = assigneeName,
+                            notifyAssignee = notifyAssignee,
+                            assigneeIds    = multiAssigneeIds,
+                            assigneeNames  = multiAssigneeNames,
+                            onDone         = afterAction,
                         )
                     } else {
                         workforceVm.addTask(
@@ -756,12 +944,21 @@ fun NewTaskScreen(
                             dueDate        = dueDateMs,
                             ownerAdminName = adminDisplayName,
                             assigneeName   = assigneeName,
+                            notifyAssignee = notifyAssignee,
+                            assigneeIds    = multiAssigneeIds,
+                            assigneeNames  = multiAssigneeNames,
+                            onDone         = afterAction,
                         )
                     }
-                    onCreated()
                 }
             },
             modifier = Modifier.align(Alignment.BottomCenter),
+        )
+
+        // Modal loader while addTask / updateTask is in flight
+        LoadingOverlay(
+            visible = actionInProgress,
+            message = if (isEditing) "Updating task…" else "Creating task…",
         )
     }
 
@@ -880,42 +1077,14 @@ fun NewTaskScreen(
 
 @Composable
 private fun GradientHeader(taskId: String, onBack: () -> Unit, isEditing: Boolean = false) {
-    com.example.uniwattelektrik.core.components.PremiumHeaderBackground(
-        roundedBottom = false,
-    ) {
-        Column(
-            modifier = Modifier
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 18.dp, vertical = 16.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                com.example.uniwattelektrik.core.components.GlassBackButton(
-                    onClick = onBack,
-                )
-
-                Spacer(Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(if (isEditing) "Edit Task" else "New Task", color = Color.White,
-                         fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text(if (isEditing) "UPDATE EXISTING TASK" else "ADVANCED · 7 SECTIONS",
-                         color = Color(0xCCFFFFFF), fontSize = 11.sp,
-                         fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp)
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(Color.White.copy(alpha = 0.18f))
-                    .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(50))
-                    .padding(horizontal = 14.dp, vertical = 7.dp),
-            ) {
-                Text(taskId, color = Color.White, fontSize = 12.sp,
-                     fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
-            }
-        }
-    }
+    com.example.uniwattelektrik.core.components.OperationsHeader(
+        eyebrow  = if (isEditing) "UPDATE EXISTING TASK" else "ADVANCED · 7 SECTIONS",
+        title    = if (isEditing) "Edit Task" else "New Task",
+        onBack   = onBack,
+        extras   = {
+            com.example.uniwattelektrik.core.components.DsGlassChip(label = taskId)
+        },
+    )
 }
 
 /* ─────────────────────────────────────────────────────────────────────── *
@@ -1325,7 +1494,7 @@ private fun PriorityCard(
 ) {
     Column(
         modifier = modifier
-            .height(108.dp)
+            .height(126.dp)
             .shadow(
                 if (selected) 14.dp else 4.dp,
                 RoundedCornerShape(16.dp),
@@ -1334,20 +1503,32 @@ private fun PriorityCard(
             .clip(RoundedCornerShape(16.dp))
             .background(if (selected) bg else CardBg)
             .clickable(onClick = onClick)
-            .padding(vertical = 12.dp),
+            .padding(horizontal = 8.dp, vertical = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Box(
             modifier = Modifier
-                .size(36.dp).clip(CircleShape)
+                .size(34.dp).clip(CircleShape)
                 .background(if (selected) tint else bg),
             contentAlignment = Alignment.Center,
-        ) { Text(emoji, fontSize = 18.sp) }
-        Text(label, color = if (selected) tint else InkPrimary,
-             fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
-        Text(sub, color = InkSecondary, fontSize = 10.sp,
-             fontWeight = FontWeight.Medium)
+        ) { Text(emoji, fontSize = 17.sp) }
+        Text(
+            text       = label,
+            color      = if (selected) tint else InkPrimary,
+            fontSize   = 12.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.6.sp,
+            maxLines   = 1,
+        )
+        Text(
+            text       = sub,
+            color      = InkSecondary,
+            fontSize   = 10.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines   = 1,
+            textAlign  = androidx.compose.ui.text.style.TextAlign.Center,
+        )
     }
 }
 
@@ -1385,11 +1566,13 @@ private fun ChecklistRow(text: String, onRemove: () -> Unit) {
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(20.dp).clip(RoundedCornerShape(6.dp))
-                .border(1.5.dp, Success, RoundedCornerShape(6.dp))
-                .background(Color.White),
+        // Visual placeholder — admins build the checklist; the assignee
+        // ticks each item later in the user app via the same DsCheckbox.
+        com.example.uniwattelektrik.core.components.DsCheckbox(
+            checked  = false,
+            onChange = {},
+            enabled  = false,
+            size     = 20.dp,
         )
         Spacer(Modifier.width(10.dp))
         Text(text, color = InkPrimary, fontSize = 13.sp,

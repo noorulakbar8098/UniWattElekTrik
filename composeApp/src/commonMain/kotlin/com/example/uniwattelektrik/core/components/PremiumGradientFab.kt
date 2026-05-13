@@ -51,25 +51,55 @@ fun BoxScope.PremiumGradientFab(
         else
             Modifier.padding(end = endPadding, bottom = bottomPadding)
 
+    // Outer wrapper holds the ambient halo + the FAB. The halo sits under the
+    // FAB and softly extends past its edges, giving the button a cinematic
+    // "powered-on" glow without resorting to neon.
     Box(
         modifier = modifier
             .align(alignment)
             .windowInsetsPadding(WindowInsets.navigationBars)
             .then(sidePad)
-            .size(64.dp)
-            .shadow(20.dp, CircleShape, spotColor = AppTheme.Brand.copy(alpha = 0.6f))
-            .clip(CircleShape)
-            .background(Brush.linearGradient(listOf(AppTheme.Brand, AppTheme.Brand700)))
-            .border(3.dp, Color.White, CircleShape)
-            .clickable(onClick = onClick),
+            .size(88.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = Color.White,
-            modifier = Modifier.size(28.dp),
+        // Soft cyan-blue halo — sized larger than the FAB so it bleeds.
+        Box(
+            modifier = Modifier
+                .size(88.dp)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            AppTheme.Brand.copy(alpha = 0.28f),
+                            AppTheme.Brand.copy(alpha = 0.10f),
+                            Color.Transparent,
+                        ),
+                    ),
+                ),
         )
+        // The FAB itself — unchanged geometry, slightly deeper shadow now
+        // tinted by the brand so the lift reads as ambient-lit.
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .shadow(
+                    elevation    = 24.dp,
+                    shape        = CircleShape,
+                    ambientColor = AppTheme.Brand.copy(alpha = 0.35f),
+                    spotColor    = AppTheme.Brand.copy(alpha = 0.55f),
+                )
+                .clip(CircleShape)
+                .background(Brush.linearGradient(listOf(AppTheme.Brand, AppTheme.Brand700)))
+                .border(3.dp, Color.White, CircleShape)
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = Color.White,
+                modifier = Modifier.size(28.dp),
+            )
+        }
     }
 }
 

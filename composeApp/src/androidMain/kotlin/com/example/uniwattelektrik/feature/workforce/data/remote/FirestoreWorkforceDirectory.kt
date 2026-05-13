@@ -385,23 +385,56 @@ class FirestoreWorkforceDirectory(
     }
 
     override fun observeTasksForUser(userId: String): Flow<List<TaskRecord>> = callbackFlow {
-        AppLog.d("PATH", "observe $COL_TASKS where assignedUserId==$userId")
-        // Flat collection — simple equality query, no collectionGroup needed.
-        // No server-side orderBy → no composite index required. Sort below.
-        val reg = firestore.collection(COL_TASKS)
+        AppLog.d("PATH", "observe $COL_TASKS where assignedUserId==$userId OR assignedUserIds contains $userId")
+        // Two parallel snapshot listeners — one for the legacy single-assignee
+        // field (`assignedUserId == userId`) and one for the new multi-
+        // assignee array (`assignedUserIds array-contains userId`). Results
+        // are merged & de-duplicated by doc id so the UI sees a single list.
+        //
+        // Firestore does not support OR queries across different fields with
+        // a snapshot listener (`Filter.or` requires v24.4+ and composite
+        // index registration). Running two listeners is functionally
+        // equivalent and works on any Firestore version.
+        val legacyList = java.util.concurrent.ConcurrentHashMap<String, TaskRecord>()
+        val arrayList  = java.util.concurrent.ConcurrentHashMap<String, TaskRecord>()
+
+        fun emit() {
+            // Array doc takes precedence (it's the canonical shape going
+            // forward). Legacy entries fill the gap for old single-assignee
+            // docs that never got migrated.
+            val merged = (legacyList + arrayList).values
+                .sortedByDescending { it.createdAtMs ?: 0L }
+            trySend(merged.toList())
+        }
+
+        val regLegacy = firestore.collection(COL_TASKS)
             .whereEqualTo("assignedUserId", userId)
             .addSnapshotListener { snap, err ->
                 if (err != null) {
-                    AppLog.e("PATH", "observeTasksForUser failed: ${err.message}")
+                    AppLog.e("PATH", "observeTasksForUser(legacy) failed: ${err.message}")
                     close(err); return@addSnapshotListener
                 }
-                val list = snap?.documents.orEmpty()
-                    .map { d -> (d.getMillis("createdAt") ?: 0L) to toTask(d) }
-                    .sortedByDescending { it.first }
-                    .map { it.second }
-                trySend(list)
+                legacyList.clear()
+                snap?.documents.orEmpty().forEach { d ->
+                    val t = toTask(d); legacyList[t.id] = t
+                }
+                emit()
             }
-        awaitClose { reg.remove() }
+        val regArray = firestore.collection(COL_TASKS)
+            .whereArrayContains("assignedUserIds", userId)
+            .addSnapshotListener { snap, err ->
+                if (err != null) {
+                    AppLog.e("PATH", "observeTasksForUser(array) failed: ${err.message}")
+                    // Don't close — legacy listener may still be feeding data.
+                    return@addSnapshotListener
+                }
+                arrayList.clear()
+                snap?.documents.orEmpty().forEach { d ->
+                    val t = toTask(d); arrayList[t.id] = t
+                }
+                emit()
+            }
+        awaitClose { regLegacy.remove(); regArray.remove() }
     }
 
     override suspend fun addTask(
@@ -425,73 +458,100 @@ class FirestoreWorkforceDirectory(
         dueDate: Long?,
         ownerAdminName: String,
         assigneeName: String,
+        notifyAssignee: Boolean,
+        assigneeIds: List<String>,
+        assigneeNames: List<String>,
     ): TaskRecord {
+        // Reconcile single + multi inputs. Multi-assignee callers pass non-
+        // empty arrays; legacy callers pass just userId/assigneeName.
+        val effectiveIds: List<String> = (
+            if (assigneeIds.isNotEmpty()) assigneeIds
+            else listOfNotNull(userId?.takeIf { it.isNotBlank() })
+        ).distinct()
+        val effectiveNames: List<String> = when {
+            assigneeNames.isNotEmpty() -> assigneeNames
+            assigneeName.isNotBlank()  -> listOf(assigneeName)
+            else                       -> emptyList()
+        }
+        val legacyUid  = effectiveIds.firstOrNull()
+        val legacyName = effectiveNames.firstOrNull().orEmpty()
+
         val ref = firestore.collection(COL_TASKS).document()
         AppLog.i("PATH", "write $COL_TASKS/${ref.id}")
         ref.set(mapOf(
-            "adminId"        to adminId,
-            "ownerAdminId"   to adminId,
-            "ownerAdminName" to ownerAdminName,
-            "assignedUserId" to userId,
-            "assigneeName"   to assigneeName,
-            "title"          to title,
-            "description"    to description,
-            "priority"       to priority.lowercase(),
-            "status"         to "pending",
-            "location"       to location,
-            "time"           to time,
-            "day"            to day,
-            "scheduledDate"  to todayMidnightUtc(),
-            "dueDate"        to dueDate?.let { Timestamp(java.util.Date(it)) },
-            "completedAt"    to null,
-            "acceptedAt"     to null,
-            "departmentId"   to departmentId,
-            "departmentName" to departmentName,
-            "equipmentId"    to equipmentId,
-            "equipmentName"  to equipmentName,
-            "checklist"      to checklist.map { mapOf("text" to it.text, "done" to it.done) },
-            "attachments"    to attachments,
-            "address"        to address,
-            "latitude"       to latitude,
-            "longitude"      to longitude,
-            "createdAt"      to FieldValue.serverTimestamp(),
-            "updatedAt"      to FieldValue.serverTimestamp(),
+            "adminId"         to adminId,
+            "ownerAdminId"    to adminId,
+            "ownerAdminName"  to ownerAdminName,
+            // Legacy single-assignee mirror — old clients read these.
+            "assignedUserId"  to legacyUid,
+            "assigneeName"    to legacyName,
+            // Canonical multi-assignee arrays — new clients query via these.
+            "assignedUserIds" to effectiveIds,
+            "assigneeNames"   to effectiveNames,
+            "title"           to title,
+            "description"     to description,
+            "priority"        to priority.lowercase(),
+            "status"          to "pending",
+            "location"        to location,
+            "time"            to time,
+            "day"             to day,
+            "scheduledDate"   to todayMidnightUtc(),
+            "dueDate"         to dueDate?.let { Timestamp(java.util.Date(it)) },
+            "completedAt"     to null,
+            "acceptedAt"      to null,
+            "departmentId"    to departmentId,
+            "departmentName"  to departmentName,
+            "equipmentId"     to equipmentId,
+            "equipmentName"   to equipmentName,
+            "checklist"       to checklist.map { mapOf("text" to it.text, "done" to it.done) },
+            "attachments"     to attachments,
+            "address"         to address,
+            "latitude"        to latitude,
+            "longitude"       to longitude,
+            "notifyAssignee"  to notifyAssignee,
+            "createdAt"       to FieldValue.serverTimestamp(),
+            "updatedAt"       to FieldValue.serverTimestamp(),
         )).awaitBounded()
 
-        if (userId != null) {
+        // Increment tasksOpen for every assignee (each person carries one
+        // open-task counter independent of how many co-assignees exist).
+        effectiveIds.forEach { uid ->
             runCatching {
-                firestore.collection(COL_USERS).document(userId)
+                firestore.collection(COL_USERS).document(uid)
                     .update("tasksOpen", FieldValue.increment(1))
                     .awaitBounded()
             }.onFailure {
-                AppLog.w("PATH", "tasksOpen increment failed (non-fatal): ${it.message}")
+                AppLog.w("PATH", "tasksOpen++ failed for $uid (non-fatal): ${it.message}")
             }
         }
 
         return TaskRecord(
-            id             = ref.id,
-            adminId        = adminId,
-            userId         = userId,
-            title          = title,
-            description    = description,
-            location       = location,
-            time           = time,
-            day            = day,
-            priority       = priority,
-            status         = "Todo",
-            assigneeName   = assigneeName,
-            ownerAdminId   = adminId,
-            ownerAdminName = ownerAdminName,
-            dueDate        = dueDate,
-            departmentId   = departmentId,
-            departmentName = departmentName,
-            equipmentId    = equipmentId,
-            equipmentName  = equipmentName,
-            checklist      = checklist,
-            attachments    = attachments,
-            address        = address,
-            latitude       = latitude,
-            longitude      = longitude,
+            id              = ref.id,
+            adminId         = adminId,
+            userId          = legacyUid,
+            title           = title,
+            description     = description,
+            location        = location,
+            time            = time,
+            day             = day,
+            priority        = priority,
+            status          = "Todo",
+            assigneeName    = legacyName,
+            assignedUserIds = effectiveIds,
+            assigneeNames   = effectiveNames,
+            ownerAdminId    = adminId,
+            ownerAdminName  = ownerAdminName,
+            dueDate         = dueDate,
+            departmentId    = departmentId,
+            departmentName  = departmentName,
+            equipmentId     = equipmentId,
+            equipmentName   = equipmentName,
+            checklist       = checklist,
+            attachments     = attachments,
+            address         = address,
+            latitude        = latitude,
+            longitude       = longitude,
+            notifyAssignee  = notifyAssignee,
         )
     }
 
@@ -534,6 +594,9 @@ class FirestoreWorkforceDirectory(
         longitude: Double?,
         dueDate: Long?,
         assigneeName: String,
+        notifyAssignee: Boolean,
+        assigneeIds: List<String>,
+        assigneeNames: List<String>,
     ): TaskRecord {
         val ref = firestore.collection(COL_TASKS).document(taskId)
         AppLog.i("PATH", "update $COL_TASKS/$taskId")
@@ -541,44 +604,127 @@ class FirestoreWorkforceDirectory(
         // Read existing doc to detect assignee changes for tasksOpen rebalance.
         val before = runCatching { ref.get().awaitBounded() }.getOrNull()
         val prevUserId = before?.getString("assignedUserId")
+        @Suppress("UNCHECKED_CAST")
+        val prevAssigneeIds = (before?.get("assignedUserIds") as? List<String>)
+            ?: listOfNotNull(prevUserId?.takeIf { it.isNotBlank() })
         val prevStatus = before?.getString("status") ?: "pending"
-        val isOpen = prevStatus.lowercase() != "completed" && prevStatus.lowercase() != "done"
+        val isOpen = prevStatus.lowercase() !in setOf("completed", "done")
+
+        // Reconcile single + multi inputs (mirrors addTask).
+        val effectiveIds: List<String> = (
+            if (assigneeIds.isNotEmpty()) assigneeIds
+            else listOfNotNull(userId?.takeIf { it.isNotBlank() })
+        ).distinct()
+        val effectiveNames: List<String> = when {
+            assigneeNames.isNotEmpty() -> assigneeNames
+            assigneeName.isNotBlank()  -> listOf(assigneeName)
+            else                       -> emptyList()
+        }
+        val legacyUid  = effectiveIds.firstOrNull()
+        val legacyName = effectiveNames.firstOrNull().orEmpty()
 
         ref.update(mapOf(
-            "assignedUserId" to userId,
-            "assigneeName"   to assigneeName,
-            "title"          to title,
-            "description"    to description,
-            "priority"       to priority.lowercase(),
-            "location"       to location,
-            "time"           to time,
-            "day"            to day,
-            "dueDate"        to dueDate?.let { Timestamp(java.util.Date(it)) },
-            "departmentId"   to departmentId,
-            "departmentName" to departmentName,
-            "equipmentId"    to equipmentId,
-            "equipmentName"  to equipmentName,
-            "checklist"      to checklist.map { mapOf("text" to it.text, "done" to it.done) },
-            "attachments"    to attachments,
-            "address"        to address,
-            "latitude"       to latitude,
-            "longitude"      to longitude,
-            "updatedAt"      to FieldValue.serverTimestamp(),
+            "assignedUserId"  to legacyUid,
+            "assigneeName"    to legacyName,
+            "assignedUserIds" to effectiveIds,
+            "assigneeNames"   to effectiveNames,
+            "title"           to title,
+            "description"     to description,
+            "priority"        to priority.lowercase(),
+            "location"        to location,
+            "time"            to time,
+            "day"             to day,
+            "dueDate"         to dueDate?.let { Timestamp(java.util.Date(it)) },
+            "departmentId"    to departmentId,
+            "departmentName"  to departmentName,
+            "equipmentId"     to equipmentId,
+            "equipmentName"   to equipmentName,
+            "checklist"       to checklist.map { mapOf("text" to it.text, "done" to it.done) },
+            "attachments"     to attachments,
+            "address"         to address,
+            "latitude"        to latitude,
+            "longitude"       to longitude,
+            "notifyAssignee"  to notifyAssignee,
+            "updatedAt"       to FieldValue.serverTimestamp(),
         )).awaitBounded()
 
-        // Rebalance tasksOpen if assignee changed and the task is still open.
-        if (isOpen && prevUserId != userId) {
-            if (!prevUserId.isNullOrBlank()) {
+        // Rebalance tasksOpen against the assignee-set delta when the task
+        // is still open. Each unique uid that joined gets +1, each uid that
+        // left gets -1.
+        if (isOpen) {
+            val prevSet = prevAssigneeIds.toSet()
+            val nextSet = effectiveIds.toSet()
+            val added   = nextSet - prevSet
+            val removed = prevSet - nextSet
+            added.forEach { uid ->
                 runCatching {
-                    firestore.collection(COL_USERS).document(prevUserId)
+                    firestore.collection(COL_USERS).document(uid)
+                        .update("tasksOpen", FieldValue.increment(1)).awaitBounded()
+                }.onFailure { AppLog.w("PATH", "tasksOpen++ failed: ${it.message}") }
+            }
+            removed.forEach { uid ->
+                runCatching {
+                    firestore.collection(COL_USERS).document(uid)
                         .update("tasksOpen", FieldValue.increment(-1)).awaitBounded()
                 }.onFailure { AppLog.w("PATH", "tasksOpen-- failed: ${it.message}") }
             }
-            if (!userId.isNullOrBlank()) {
+        }
+
+        return toTask(ref.get().awaitBounded())
+    }
+
+    override suspend fun reassignTask(
+        taskId: String,
+        adminId: String,
+        newAssigneeIds: List<String>,
+        newAssigneeNames: List<String>,
+    ): TaskRecord {
+        val ref = firestore.collection(COL_TASKS).document(taskId)
+        AppLog.i("PATH", "reassign $COL_TASKS/$taskId → $newAssigneeIds")
+
+        val before = runCatching { ref.get().awaitBounded() }.getOrNull()
+        val prevUserId = before?.getString("assignedUserId")
+        @Suppress("UNCHECKED_CAST")
+        val prevAssigneeIds = (before?.get("assignedUserIds") as? List<String>)
+            ?: listOfNotNull(prevUserId?.takeIf { it.isNotBlank() })
+        val prevStatus = before?.getString("status") ?: "pending"
+        val isOpen = prevStatus.lowercase() !in setOf("completed", "done")
+
+        val effectiveIds = newAssigneeIds.filter { it.isNotBlank() }.distinct()
+        val effectiveNames = newAssigneeNames
+        val legacyUid  = effectiveIds.firstOrNull()
+        val legacyName = effectiveNames.firstOrNull().orEmpty()
+
+        ref.update(mapOf(
+            "assignedUserId"       to legacyUid,
+            "assigneeName"         to legacyName,
+            "assignedUserIds"      to effectiveIds,
+            "assigneeNames"        to effectiveNames,
+            "reassignedAt"         to FieldValue.serverTimestamp(),
+            "reassignmentHistory"  to FieldValue.arrayUnion(
+                mapOf(
+                    "fromUserIds" to prevAssigneeIds,
+                    "toUserIds"   to effectiveIds,
+                    "atMs"        to System.currentTimeMillis(),
+                )
+            ),
+            "updatedAt"            to FieldValue.serverTimestamp(),
+        )).awaitBounded()
+
+        if (isOpen) {
+            val prevSet = prevAssigneeIds.toSet()
+            val nextSet = effectiveIds.toSet()
+            (nextSet - prevSet).forEach { uid ->
                 runCatching {
-                    firestore.collection(COL_USERS).document(userId)
+                    firestore.collection(COL_USERS).document(uid)
                         .update("tasksOpen", FieldValue.increment(1)).awaitBounded()
                 }.onFailure { AppLog.w("PATH", "tasksOpen++ failed: ${it.message}") }
+            }
+            (prevSet - nextSet).forEach { uid ->
+                runCatching {
+                    firestore.collection(COL_USERS).document(uid)
+                        .update("tasksOpen", FieldValue.increment(-1)).awaitBounded()
+                }.onFailure { AppLog.w("PATH", "tasksOpen-- failed: ${it.message}") }
             }
         }
 
@@ -597,13 +743,15 @@ class FirestoreWorkforceDirectory(
                 val list = snap?.documents.orEmpty().map { d ->
                     val ts = d.getMillis("createdAt") ?: 0L
                     ts to TaskNote(
-                        id          = d.id,
-                        taskId      = taskId,
-                        authorId    = d.getString("authorId") ?: "",
-                        authorName  = d.getString("authorName") ?: "",
-                        role        = d.getString("role") ?: "user",
-                        message     = d.getString("message") ?: "",
-                        createdAtMs = ts.takeIf { it > 0 },
+                        id              = d.id,
+                        taskId          = taskId,
+                        authorId        = d.getString("authorId") ?: "",
+                        authorName      = d.getString("authorName") ?: "",
+                        role            = d.getString("role") ?: "user",
+                        message         = d.getString("message") ?: "",
+                        createdAtMs     = ts.takeIf { it > 0 },
+                        voiceUrl        = d.getString("voiceUrl"),
+                        voiceDurationMs = d.getLong("voiceDurationMs"),
                     )
                 }.sortedBy { it.first }.map { it.second }
                 trySend(list)
@@ -617,17 +765,24 @@ class FirestoreWorkforceDirectory(
         authorName: String,
         role: String,
         message: String,
+        voiceUrl: String?,
+        voiceDurationMs: Long?,
     ): TaskNote {
         val ref = firestore.collection(COL_TASKS).document(taskId)
             .collection("notes").document()
         AppLog.i("PATH", "write $COL_TASKS/$taskId/notes/${ref.id}")
-        ref.set(mapOf(
-            "authorId"   to authorId,
-            "authorName" to authorName,
-            "role"       to role,
-            "message"    to message,
-            "createdAt"  to FieldValue.serverTimestamp(),
-        )).awaitBounded()
+        val payload = buildMap {
+            put("authorId",   authorId)
+            put("authorName", authorName)
+            put("role",       role)
+            put("message",    message)
+            put("createdAt",  FieldValue.serverTimestamp())
+            if (voiceUrl != null) {
+                put("voiceUrl",        voiceUrl)
+                put("voiceDurationMs", voiceDurationMs ?: 0L)
+            }
+        }
+        ref.set(payload).awaitBounded()
         // Also bump the task's updatedAt so listeners refresh.
         runCatching {
             firestore.collection(COL_TASKS).document(taskId)
@@ -635,13 +790,15 @@ class FirestoreWorkforceDirectory(
                 .awaitBounded()
         }
         return TaskNote(
-            id          = ref.id,
-            taskId      = taskId,
-            authorId    = authorId,
-            authorName  = authorName,
-            role        = role,
-            message     = message,
-            createdAtMs = System.currentTimeMillis(),
+            id              = ref.id,
+            taskId          = taskId,
+            authorId        = authorId,
+            authorName      = authorName,
+            role            = role,
+            message         = message,
+            createdAtMs     = System.currentTimeMillis(),
+            voiceUrl        = voiceUrl,
+            voiceDurationMs = voiceDurationMs,
         )
     }
 
@@ -652,25 +809,59 @@ class FirestoreWorkforceDirectory(
         newStatus: String,
     ): TaskRecord {
         val firestoreStatus = when (newStatus.lowercase()) {
-            "todo"                 -> "pending"
-            "inprogress"           -> "in_progress"
-            "done"                 -> "completed"
-            else                   -> newStatus.lowercase()
+            "todo"                                  -> "pending"
+            "inprogress"                            -> "in_progress"
+            "inreview", "review", "in_review"       -> "in_review"
+            "done"                                  -> "completed"
+            else                                    -> newStatus.lowercase()
         }
         val ref = firestore.collection(COL_TASKS).document(taskId)
+
+        // Read the previous status so we can detect "completed → active"
+        // (a reopen) and keep counters / reopen log consistent.
+        val before = runCatching { ref.get().awaitBounded() }.getOrNull()
+        val prevStatus = before?.getString("status")?.lowercase() ?: "pending"
+        val wasCompleted   = prevStatus == "completed"
+        val nowCompleted   = firestoreStatus == "completed"
+        val isReopen       = wasCompleted && !nowCompleted
+
+        // Resolve the full assignee set (multi-assignee aware) so counters
+        // rebalance correctly for tasks with co-assignees.
+        @Suppress("UNCHECKED_CAST")
+        val arrayIds = (before?.get("assignedUserIds") as? List<String>) ?: emptyList()
+        val allAssigneeUids: List<String> = (
+            arrayIds + listOfNotNull(
+                before?.getString("assignedUserId")?.takeIf { it.isNotBlank() }
+            ) + listOfNotNull(assignedUserId?.takeIf { it.isNotBlank() })
+        ).filter { it.isNotBlank() }.distinct()
+
         val updates = mutableMapOf<String, Any?>(
             "status"    to firestoreStatus,
             "updatedAt" to FieldValue.serverTimestamp(),
         )
-        if (firestoreStatus == "completed") {
+        if (nowCompleted) {
             updates["completedAt"] = FieldValue.serverTimestamp()
-            if (assignedUserId != null) {
+            allAssigneeUids.forEach { uid ->
                 runCatching {
-                    firestore.collection(COL_USERS).document(assignedUserId)
+                    firestore.collection(COL_USERS).document(uid)
                         .update("tasksOpen", FieldValue.increment(-1))
                         .awaitBounded()
                 }.onFailure {
-                    AppLog.w("PATH", "tasksOpen decrement failed (non-fatal): ${it.message}")
+                    AppLog.w("PATH", "tasksOpen-- failed for $uid (non-fatal): ${it.message}")
+                }
+            }
+        } else if (isReopen) {
+            // Reopen: append a server-side timestamp to the audit log and
+            // wipe the stale completedAt so the task no longer looks done.
+            updates["reopens"]     = FieldValue.arrayUnion(System.currentTimeMillis())
+            updates["completedAt"] = null
+            allAssigneeUids.forEach { uid ->
+                runCatching {
+                    firestore.collection(COL_USERS).document(uid)
+                        .update("tasksOpen", FieldValue.increment(1))
+                        .awaitBounded()
+                }.onFailure {
+                    AppLog.w("PATH", "tasksOpen re-increment failed for $uid (non-fatal): ${it.message}")
                 }
             }
         }
@@ -778,6 +969,21 @@ class FirestoreWorkforceDirectory(
             publicId   = "att_${System.currentTimeMillis()}",
         )
 
+    override suspend fun uploadVoiceNote(adminId: String, contentUri: String): String =
+        // Cloudinary stores audio under the "video" resource type — uploading
+        // an .m4a to the /image/upload endpoint fails silently (HTTP 400).
+        // resourceType/mimeType/extension are explicit to keep this surviving
+        // any future automated reformat passes.
+        CloudinaryUploader.upload(
+            context      = appContext,
+            contentUri   = contentUri,
+            folder       = "voice-notes/$adminId",
+            publicId     = "vn_${System.currentTimeMillis()}",
+            resourceType = "video",
+            mimeType     = "audio/mp4",
+            extension    = "m4a",
+        )
+
     override suspend fun updateTaskAttachments(taskId: String, urls: List<String>) {
         AppLog.i("PATH", "update $COL_TASKS/$taskId attachments=${urls.size}")
         firestore.collection(COL_TASKS).document(taskId)
@@ -806,6 +1012,13 @@ class FirestoreWorkforceDirectory(
             status           = normalizeTaskStatus(d.getString("status") ?: "pending"),
             assigneeInitials = (d.getString("assigneeInitials") ?: "").take(2),
             assigneeName     = d.getString("assigneeName") ?: "",
+            assignedUserIds  = @Suppress("UNCHECKED_CAST")
+                (d.get("assignedUserIds") as? List<String>)
+                    ?.filter { it.isNotBlank() }
+                    ?: emptyList(),
+            assigneeNames    = @Suppress("UNCHECKED_CAST")
+                (d.get("assigneeNames") as? List<String>)
+                    ?: emptyList(),
             ownerAdminId     = d.getString("ownerAdminId") ?: (d.getString("adminId") ?: ""),
             ownerAdminName   = d.getString("ownerAdminName") ?: "",
             scheduledDateMs  = d.getMillis("scheduledDate"),
@@ -843,6 +1056,15 @@ class FirestoreWorkforceDirectory(
                             quantity = (m["quantity"] as? Long)?.toInt() ?: 0,
                         )
                     } ?: emptyList(),
+            // Legacy tasks won't have this field set — default to true so
+            // notifications keep working until the admin opts a task out.
+            notifyAssignee      = d.getBoolean("notifyAssignee") ?: true,
+            // Audit log of Done → !Done transitions. Firestore stores them
+            // as a Long array; legacy tasks have no field → empty list.
+            reopens             = @Suppress("UNCHECKED_CAST")
+                (d.get("reopens") as? List<Number>)
+                    ?.map { it.toLong() }
+                    ?: emptyList(),
         )
     }
 
@@ -907,9 +1129,54 @@ class FirestoreWorkforceDirectory(
                         type      = d.getString("type") ?: "",
                         quantity  = (d.getLong("quantity") ?: 0L).toInt(),
                         createdAt = d.getMillis("createdAt"),
+                        // Linkage to source task (populated by completeTaskWithSignoff);
+                        // null for manual deductions / pre-Phase-2 transactions.
+                        taskId    = d.getString("taskId"),
                     )
                 }
                 trySend(list)
+            }
+        awaitClose { reg.remove() }
+    }
+
+    override fun observeMonthlyStockSnapshot(
+        adminId: String,
+        year: Int,
+        month: Int,
+    ): Flow<MonthlyStockSnapshot?> = callbackFlow {
+        val key = "$year-${month.toString().padStart(2, '0')}"
+        val path = "monthly_stock_snapshots/$adminId/months/$key"
+        AppLog.d("PATH", "observe $path")
+        val reg = firestore.document(path)
+            .addSnapshotListener { doc, err ->
+                if (err != null) {
+                    AppLog.w("PATH", "observeMonthlyStockSnapshot failed: ${err.message}")
+                    trySend(null); return@addSnapshotListener
+                }
+                if (doc == null || !doc.exists()) {
+                    trySend(null); return@addSnapshotListener
+                }
+                @Suppress("UNCHECKED_CAST")
+                val rawItems = (doc.get("items") as? List<Map<String, Any?>>) ?: emptyList()
+                val parsed = MonthlyStockSnapshot(
+                    year       = (doc.getLong("year")  ?: year.toLong()).toInt(),
+                    month      = (doc.getString("month")?.toIntOrNull()
+                        ?: doc.getLong("month")?.toInt()
+                        ?: month),
+                    items      = rawItems.map { m ->
+                        SnapshotItem(
+                            itemId   = m["itemId"]   as? String ?: "",
+                            name     = m["name"]     as? String ?: "",
+                            stockQty = (m["stockQty"] as? Number)?.toInt() ?: 0,
+                            price    = (m["price"]    as? Number)?.toDouble() ?: 0.0,
+                            value    = (m["value"]    as? Number)?.toDouble() ?: 0.0,
+                        )
+                    },
+                    totalQty    = (doc.getLong("totalQty") ?: 0L).toInt(),
+                    totalValue  = doc.getDouble("totalValue") ?: 0.0,
+                    snapshotAtMs = doc.getMillis("snapshotAt"),
+                )
+                trySend(parsed)
             }
         awaitClose { reg.remove() }
     }
@@ -1189,10 +1456,11 @@ class FirestoreWorkforceDirectory(
     }
 
     private fun normalizeTaskStatus(raw: String): String = when (raw.lowercase()) {
-        "pending",     "todo"       -> "Todo"
-        "in_progress", "inprogress" -> "InProgress"
-        "completed",   "done"       -> "Done"
-        else                        -> raw
+        "pending",     "todo"                  -> "Todo"
+        "in_progress", "inprogress"            -> "InProgress"
+        "in_review",   "inreview",   "review"  -> "InReview"
+        "completed",   "done"                  -> "Done"
+        else                                   -> raw
     }
 
     // ─── Spares ────────────────────────────────────────────────────────────────
@@ -1227,6 +1495,10 @@ class FirestoreWorkforceDirectory(
                         vendorContact2 = d.getString("vendorContact2") ?: "",
                         vendorAddress2 = d.getString("vendorAddress2") ?: "",
                         vendorLocation = d.getString("vendorLocation") ?: "",
+                        departmentId   = d.getString("departmentId") ?: "",
+                        departmentName = d.getString("departmentName") ?: "",
+                        equipmentId    = d.getString("equipmentId") ?: "",
+                        equipmentName  = d.getString("equipmentName") ?: "",
                         createdAt      = d.getMillis("createdAt"),
                         updatedAt      = d.getMillis("updatedAt"),
                     )
@@ -1261,6 +1533,10 @@ class FirestoreWorkforceDirectory(
             "vendorContact2" to item.vendorContact2,
             "vendorAddress2" to item.vendorAddress2,
             "vendorLocation" to item.vendorLocation,
+            "departmentId"   to item.departmentId,
+            "departmentName" to item.departmentName,
+            "equipmentId"    to item.equipmentId,
+            "equipmentName"  to item.equipmentName,
             "createdAt"      to FieldValue.serverTimestamp(),
             "updatedAt"      to FieldValue.serverTimestamp(),
         )
@@ -1299,6 +1575,10 @@ class FirestoreWorkforceDirectory(
                         "vendorContact2" to item.vendorContact2,
                         "vendorAddress2" to item.vendorAddress2,
                         "vendorLocation" to item.vendorLocation,
+                        "departmentId"   to item.departmentId,
+                        "departmentName" to item.departmentName,
+                        "equipmentId"    to item.equipmentId,
+                        "equipmentName"  to item.equipmentName,
                         "createdAt"      to FieldValue.serverTimestamp(),
                         "updatedAt"      to FieldValue.serverTimestamp(),
                     ),
@@ -1342,6 +1622,10 @@ class FirestoreWorkforceDirectory(
             vendorContact2 = doc.getString("vendorContact2") ?: "",
             vendorAddress2 = doc.getString("vendorAddress2") ?: "",
             vendorLocation = doc.getString("vendorLocation") ?: "",
+            departmentId   = doc.getString("departmentId") ?: "",
+            departmentName = doc.getString("departmentName") ?: "",
+            equipmentId    = doc.getString("equipmentId") ?: "",
+            equipmentName  = doc.getString("equipmentName") ?: "",
             updatedAt      = doc.getMillis("updatedAt"),
         )
     }

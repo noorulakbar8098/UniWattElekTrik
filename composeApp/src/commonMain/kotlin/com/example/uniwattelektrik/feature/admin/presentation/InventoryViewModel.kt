@@ -62,6 +62,10 @@ class InventoryViewModel(
 
     fun consumeDeleteResult() { _deleteResult.value = null }
 
+    // ─── Generic action-in-progress flag (CRUD on dept/equipment/spare) ──────
+    private val _actionInProgress = MutableStateFlow(false)
+    val actionInProgress: StateFlow<Boolean> = _actionInProgress.asStateFlow()
+
     private var itemsJob: Job? = null
     private var deptJob: Job? = null
     private var equipmentJob: Job? = null
@@ -104,71 +108,90 @@ class InventoryViewModel(
 
     // ─── Departments ─────────────────────────────────────────────────────────
 
-    fun addDepartment(adminId: String, name: String) {
+    fun addDepartment(adminId: String, name: String, onDone: (Result<Unit>) -> Unit = {}) {
         viewModelScope.launch {
-            try { directory.addDepartment(adminId, name) }
-            catch (e: Exception) {
-                _error.value = e.message
-                AppLog.e("InventoryVM", "Error adding department: ${e.message}")
+            _actionInProgress.value = true
+            val result = runCatching { directory.addDepartment(adminId, name) }
+            result.onFailure {
+                _error.value = it.message
+                AppLog.e("InventoryVM", "Error adding department: ${it.message}")
             }
+            _actionInProgress.value = false
+            onDone(result.map { })
         }
     }
 
-    fun updateDepartment(adminId: String, departmentId: String, name: String) {
+    fun updateDepartment(adminId: String, departmentId: String, name: String, onDone: (Result<Unit>) -> Unit = {}) {
         viewModelScope.launch {
-            try { directory.updateDepartment(adminId, departmentId, name) }
-            catch (e: Exception) {
-                _error.value = e.message
-                AppLog.e("InventoryVM", "Error updating department: ${e.message}")
+            _actionInProgress.value = true
+            val result = runCatching { directory.updateDepartment(adminId, departmentId, name) }
+            result.onFailure {
+                _error.value = it.message
+                AppLog.e("InventoryVM", "Error updating department: ${it.message}")
             }
+            _actionInProgress.value = false
+            onDone(result.map { })
         }
     }
 
-    fun deleteDepartment(adminId: String, departmentId: String) {
+    fun deleteDepartment(adminId: String, departmentId: String, onDone: (Result<Unit>) -> Unit = {}) {
         viewModelScope.launch {
-            try { directory.deleteDepartment(adminId, departmentId) }
-            catch (e: Exception) {
-                _error.value = e.message
-                AppLog.e("InventoryVM", "Error deleting department: ${e.message}")
+            _actionInProgress.value = true
+            val result = runCatching { directory.deleteDepartment(adminId, departmentId) }
+            result.onFailure {
+                _error.value = it.message
+                AppLog.e("InventoryVM", "Error deleting department: ${it.message}")
             }
+            _actionInProgress.value = false
+            onDone(result)
         }
     }
 
     // ─── Equipment ───────────────────────────────────────────────────────────
 
-    fun addEquipment(adminId: String, name: String, departmentId: String) {
+    fun addEquipment(adminId: String, name: String, departmentId: String, onDone: (Result<Unit>) -> Unit = {}) {
         viewModelScope.launch {
-            try { directory.addEquipment(adminId, name, departmentId) }
-            catch (e: Exception) {
-                _error.value = e.message
-                AppLog.e("InventoryVM", "Error adding equipment: ${e.message}")
+            _actionInProgress.value = true
+            val result = runCatching { directory.addEquipment(adminId, name, departmentId) }
+            result.onFailure {
+                _error.value = it.message
+                AppLog.e("InventoryVM", "Error adding equipment: ${it.message}")
             }
+            _actionInProgress.value = false
+            onDone(result.map { })
         }
     }
 
-    fun updateEquipment(adminId: String, equipmentId: String, name: String, departmentId: String) {
+    fun updateEquipment(adminId: String, equipmentId: String, name: String, departmentId: String, onDone: (Result<Unit>) -> Unit = {}) {
         viewModelScope.launch {
-            try { directory.updateEquipment(adminId, equipmentId, name, departmentId) }
-            catch (e: Exception) {
-                _error.value = e.message
-                AppLog.e("InventoryVM", "Error updating equipment: ${e.message}")
+            _actionInProgress.value = true
+            val result = runCatching { directory.updateEquipment(adminId, equipmentId, name, departmentId) }
+            result.onFailure {
+                _error.value = it.message
+                AppLog.e("InventoryVM", "Error updating equipment: ${it.message}")
             }
+            _actionInProgress.value = false
+            onDone(result.map { })
         }
     }
 
-    fun deleteEquipment(adminId: String, equipmentId: String) {
+    fun deleteEquipment(adminId: String, equipmentId: String, onDone: (Result<Unit>) -> Unit = {}) {
         viewModelScope.launch {
-            try { directory.deleteEquipment(adminId, equipmentId) }
-            catch (e: Exception) {
-                _error.value = e.message
-                AppLog.e("InventoryVM", "Error deleting equipment: ${e.message}")
+            _actionInProgress.value = true
+            val result = runCatching { directory.deleteEquipment(adminId, equipmentId) }
+            result.onFailure {
+                _error.value = it.message
+                AppLog.e("InventoryVM", "Error deleting equipment: ${it.message}")
             }
+            _actionInProgress.value = false
+            onDone(result)
         }
     }
 
-    fun addSpareItem(adminId: String, draft: SpareItem) {
+    fun addSpareItem(adminId: String, draft: SpareItem, onDone: (Result<Unit>) -> Unit = {}) {
         viewModelScope.launch {
-            try {
+            _actionInProgress.value = true
+            val result = runCatching {
                 val record = SpareItemRecord(
                     id             = "",
                     adminId        = adminId,
@@ -192,13 +215,20 @@ class InventoryViewModel(
                     vendorContact2 = draft.vendorContact2,
                     vendorAddress2 = draft.vendorAddress2,
                     vendorLocation = draft.vendorLocation,
+                    departmentId   = draft.departmentId,
+                    departmentName = draft.departmentName,
+                    equipmentId    = draft.equipmentId,
+                    equipmentName  = draft.equipmentName,
                 )
                 directory.addSpareItem(adminId, record)
                 AppLog.i("InventoryVM", "Spare item added: ${draft.name}")
-            } catch (e: Exception) {
-                _error.value = e.message
-                AppLog.e("InventoryVM", "Error adding spare: ${e.message}")
             }
+            result.onFailure {
+                _error.value = it.message
+                AppLog.e("InventoryVM", "Error adding spare: ${it.message}")
+            }
+            _actionInProgress.value = false
+            onDone(result.map { })
         }
     }
 
@@ -207,9 +237,9 @@ class InventoryViewModel(
      * blank id we add a new doc; otherwise we patch the existing one with all
      * editable fields.
      */
-    fun saveSpareItem(adminId: String, draft: SpareItem) {
+    fun saveSpareItem(adminId: String, draft: SpareItem, onDone: (Result<Unit>) -> Unit = {}) {
         if (draft.id.isBlank()) {
-            addSpareItem(adminId, draft)
+            addSpareItem(adminId, draft, onDone)
         } else {
             updateSpareItem(
                 adminId = adminId,
@@ -235,32 +265,50 @@ class InventoryViewModel(
                     "vendorContact2" to draft.vendorContact2,
                     "vendorAddress2" to draft.vendorAddress2,
                     "vendorLocation" to draft.vendorLocation,
+                    "departmentId"   to draft.departmentId,
+                    "departmentName" to draft.departmentName,
+                    "equipmentId"    to draft.equipmentId,
+                    "equipmentName"  to draft.equipmentName,
                 ),
+                onDone = onDone,
             )
         }
     }
 
-    fun updateSpareItem(adminId: String, itemId: String, updates: Map<String, Any?>) {
+    fun updateSpareItem(
+        adminId: String,
+        itemId: String,
+        updates: Map<String, Any?>,
+        onDone: (Result<Unit>) -> Unit = {},
+    ) {
         viewModelScope.launch {
-            try {
+            _actionInProgress.value = true
+            val result = runCatching {
                 directory.updateSpareItem(adminId, itemId, updates)
                 AppLog.i("InventoryVM", "Spare item updated: $itemId")
-            } catch (e: Exception) {
-                _error.value = e.message
-                AppLog.e("InventoryVM", "Error updating spare: ${e.message}")
             }
+            result.onFailure {
+                _error.value = it.message
+                AppLog.e("InventoryVM", "Error updating spare: ${it.message}")
+            }
+            _actionInProgress.value = false
+            onDone(result.map { })
         }
     }
 
-    fun deleteSpareItem(adminId: String, itemId: String) {
+    fun deleteSpareItem(adminId: String, itemId: String, onDone: (Result<Unit>) -> Unit = {}) {
         viewModelScope.launch {
-            try {
+            _actionInProgress.value = true
+            val result = runCatching {
                 directory.deleteSpareItem(adminId, itemId)
                 AppLog.i("InventoryVM", "Spare item deleted: $itemId")
-            } catch (e: Exception) {
-                _error.value = e.message
-                AppLog.e("InventoryVM", "Error deleting spare: ${e.message}")
             }
+            result.onFailure {
+                _error.value = it.message
+                AppLog.e("InventoryVM", "Error deleting spare: ${it.message}")
+            }
+            _actionInProgress.value = false
+            onDone(result.map { })
         }
     }
 
@@ -313,6 +361,10 @@ class InventoryViewModel(
                         vendorContact2 = d.vendorContact2,
                         vendorAddress2 = d.vendorAddress2,
                         vendorLocation = d.vendorLocation,
+                        departmentId   = d.departmentId,
+                        departmentName = d.departmentName,
+                        equipmentId    = d.equipmentId,
+                        equipmentName  = d.equipmentName,
                     )
                 }
                 val n = directory.bulkInsertSpareItems(adminId, records)
@@ -349,6 +401,11 @@ class InventoryViewModel(
         vendorContact2 = record.vendorContact2,
         vendorAddress2 = record.vendorAddress2,
         vendorLocation = record.vendorLocation,
+        departmentId   = record.departmentId,
+        departmentName = record.departmentName,
+        equipmentId    = record.equipmentId,
+        equipmentName  = record.equipmentName,
+        createdAtMs    = record.createdAt,
     )
 }
 

@@ -1,5 +1,6 @@
 package com.example.uniwattelektrik.feature.admin.presentation.screens
 
+import com.example.uniwattelektrik.core.components.ToastController
 import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
 
 import androidx.compose.animation.AnimatedVisibility
@@ -59,8 +60,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.uniwattelektrik.core.components.AppPullToRefresh
 import com.example.uniwattelektrik.core.components.DsAvatarBubble
 import com.example.uniwattelektrik.core.components.DsEmptyState
-import com.example.uniwattelektrik.core.components.PremiumHeaderBackground
-import com.example.uniwattelektrik.core.components.PremiumHeaderStatusBarColor
+import com.example.uniwattelektrik.core.components.OperationsHeader
+import com.example.uniwattelektrik.core.components.OperationsHeaderStatusBarColor
 import com.example.uniwattelektrik.core.theme.AppElevation
 import com.example.uniwattelektrik.core.theme.AppShapes
 import com.example.uniwattelektrik.core.theme.AppTheme
@@ -99,6 +100,11 @@ fun AdminLeaveApprovalsScreen(
     onBack     : () -> Unit = {},
     modifier   : Modifier = Modifier,
     initialStatusFilter: String = "All",
+    /**
+     * When false, the gradient title header is skipped so the screen can be
+     * embedded as a tab inside another container (e.g. AdminAttendanceScreen).
+     */
+    showHeader : Boolean = true,
 ) {
     TrackScreenPerformance("AdminLeaveApprovalsScreen")
     val allRequests by workforceVm.leaveRequests.collectAsStateWithLifecycle()
@@ -121,7 +127,7 @@ fun AdminLeaveApprovalsScreen(
     var rejectTarget      by remember { mutableStateOf<LeaveRecord?>(null) }
     var rejectionReason   by remember { mutableStateOf("") }
 
-    SetStatusBar(color = PremiumHeaderStatusBarColor, darkIcons = false)
+    SetStatusBar(color = OperationsHeaderStatusBarColor, darkIcons = false)
 
     if (rejectTarget != null) {
         RejectDialog(
@@ -129,11 +135,16 @@ fun AdminLeaveApprovalsScreen(
             reason       = rejectionReason,
             onReasonChange = { rejectionReason = it },
             onConfirm = {
+                val target = rejectTarget!!
                 workforceVm.rejectLeave(
-                    leaveId         = rejectTarget!!.id,
+                    leaveId         = target.id,
                     adminId         = adminUid,
-                    userId          = rejectTarget!!.userId,
+                    userId          = target.userId,
                     rejectionReason = rejectionReason.trim(),
+                )
+                ToastController.error(
+                    title = "Leave declined",
+                    body  = "${target.employeeName} · ${target.leaveType}",
                 )
                 rejectTarget    = null
                 rejectionReason = ""
@@ -145,38 +156,25 @@ fun AdminLeaveApprovalsScreen(
         )
     }
 
-    Column(modifier = modifier.fillMaxSize().background(appScreenBackground())) {
+    val actionInProgress by workforceVm.actionInProgress.collectAsStateWithLifecycle()
 
-        // Gradient header
-        PremiumHeaderBackground(roundedBottom = true, cornerRadius = 24.dp) {
-            Column(
-                modifier = Modifier
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(horizontal = AppTheme.SpLg, vertical = AppTheme.SpMd),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onBack, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint               = Color.White,
-                        )
-                    }
-                    Spacer(Modifier.width(AppTheme.SpSm))
-                    Text(
-                        "LEAVE APPROVALS",
-                        style = AppTypography.labelSmall.copy(
-                            color         = Color.White.copy(alpha = 0.70f),
-                            letterSpacing = 1.6.sp,
-                        ),
-                    )
-                    Spacer(Modifier.weight(1f))
+    Box(modifier = modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize().background(appScreenBackground())) {
+
+        // Operations header (suppressed when embedded as a tab).
+        if (showHeader) {
+            OperationsHeader(
+                eyebrow  = "LEAVE APPROVALS",
+                title    = "Leave Requests",
+                subtitle = "${allRequests.size} total · $pendingCount awaiting review",
+                onBack   = onBack,
+                actions  = {
                     if (pendingCount > 0) {
                         Box(
                             modifier = Modifier
                                 .clip(AppShapes.pill)
-                                .background(Color.White.copy(alpha = 0.20f))
-                                .padding(horizontal = AppTheme.SpSm, vertical = 5.dp),
+                                .background(Color.White.copy(alpha = 0.10f))
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
                         ) {
                             Text(
                                 "$pendingCount pending",
@@ -187,18 +185,8 @@ fun AdminLeaveApprovalsScreen(
                             )
                         }
                     }
-                }
-                Spacer(Modifier.height(AppTheme.SpSm))
-                Text(
-                    "Leave Requests",
-                    style = AppTypography.displayMedium.copy(color = Color.White),
-                )
-                Spacer(Modifier.height(AppTheme.SpXs))
-                Text(
-                    "${allRequests.size} total · $pendingCount awaiting review",
-                    style = AppTypography.bodyMedium.copy(color = Color.White.copy(alpha = 0.80f)),
-                )
-            }
+                },
+            )
         }
 
         // Filter strip: Status
@@ -271,6 +259,10 @@ fun AdminLeaveApprovalsScreen(
                                     adminId = adminUid,
                                     userId  = request.userId,
                                 )
+                                ToastController.success(
+                                    title = "Leave approved",
+                                    body  = "${request.employeeName} · ${request.leaveType}",
+                                )
                             },
                             onReject = { rejectTarget = request },
                         )
@@ -278,6 +270,11 @@ fun AdminLeaveApprovalsScreen(
                 }
             }
         }
+    }
+        com.example.uniwattelektrik.core.components.LoadingOverlay(
+            visible = actionInProgress,
+            message = "Please wait…",
+        )
     }
 }
 
@@ -349,20 +346,11 @@ private fun LeaveApprovalCard(
                         )
                     }
                 }
-                Box(
-                    modifier = Modifier
-                        .clip(AppShapes.pill)
-                        .background(statusBg)
-                        .padding(horizontal = AppTheme.SpSm, vertical = 4.dp),
-                ) {
-                    Text(
-                        request.status.replaceFirstChar { it.uppercase() },
-                        style = AppTypography.captionLarge.copy(
-                            color      = statusColor,
-                            fontWeight = FontWeight.SemiBold,
-                        ),
-                    )
-                }
+                com.example.uniwattelektrik.core.components.DsStatusChip(
+                    label      = request.status.replaceFirstChar { it.uppercase() },
+                    tint       = statusColor,
+                    background = statusBg,
+                )
             }
 
             Spacer(Modifier.height(AppTheme.SpMd))
@@ -392,20 +380,11 @@ private fun LeaveApprovalCard(
                     style    = AppTypography.captionLarge.copy(color = AppTheme.Ink700),
                     modifier = Modifier.weight(1f),
                 )
-                Box(
-                    modifier = Modifier
-                        .clip(AppShapes.pill)
-                        .background(AppTheme.Ink50)
-                        .padding(horizontal = AppTheme.SpSm, vertical = 4.dp),
-                ) {
-                    Text(
-                        "${request.totalDays}d",
-                        style = AppTypography.captionLarge.copy(
-                            color      = AppTheme.Ink700,
-                            fontWeight = FontWeight.Bold,
-                        ),
-                    )
-                }
+                com.example.uniwattelektrik.core.components.DsStatusChip(
+                    label      = "${request.totalDays}d",
+                    tint       = AppTheme.Ink700,
+                    background = AppTheme.Ink50,
+                )
             }
 
             // Row 3: Reason preview

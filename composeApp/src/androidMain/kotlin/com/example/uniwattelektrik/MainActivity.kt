@@ -36,10 +36,18 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission(),
     ) { /* no-op — user can grant later in Settings */ }
 
+    /** RECORD_AUDIO prompt for voice-note recording in task threads. Result
+     *  informational only — VoiceRecorder rechecks at call time. */
+    private val micPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* no-op — user can grant later in Settings */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Switch from the splash theme (blue window background) back to the normal theme
-        // before Compose renders, so there is no blue-under-white flash.
-        setTheme(android.R.style.Theme_Material_Light_NoActionBar)
+        // Keep the Splash theme (Ink900 windowBackground) through Compose's
+        // first frame — switching to Material.Light here used to be needed
+        // when splash_bg was a bright brand blue, but it now causes a
+        // sea-blue flash (Material.Light's default holo-blue accent shows
+        // briefly before Compose paints over it).
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
@@ -64,6 +72,16 @@ class MainActivity : ComponentActivity() {
             != PackageManager.PERMISSION_GRANTED
         ) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        // Voice-note recording — request the mic permission the first time the
+        // user lands. Result is ignored: VoiceRecorder.start() checks the
+        // permission again at call time and silently no-ops if it's denied,
+        // so the UI degrades to a "nothing happens on tap" state which the
+        // user can resolve via system Settings.
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
 
         // Register / unregister the device's FCM token in Firestore as the user
@@ -115,10 +133,17 @@ class MainActivity : ComponentActivity() {
             "approval" -> "approvals"
             else       -> type    // pass-through for future types
         }
-        DeepLinkBus.publish(key)
-        // Drop the extra so the same notification doesn't re-trigger on
+        // Optional FCM data: when the notification is for a specific task
+        // (e.g. a new note added), the shell will deep-link straight into
+        // the matching task detail instead of just opening the tasks tab.
+        val taskId = intent.getStringExtra("taskId")
+            ?: intent.getStringExtra("relatedId")
+        DeepLinkBus.publish(key, taskId)
+        // Drop the extras so the same notification doesn't re-trigger on
         // configuration changes (rotation, dark-mode toggle, etc.).
         intent.removeExtra("type")
+        intent.removeExtra("taskId")
+        intent.removeExtra("relatedId")
     }
 
     private fun hasLocationPermission(): Boolean {

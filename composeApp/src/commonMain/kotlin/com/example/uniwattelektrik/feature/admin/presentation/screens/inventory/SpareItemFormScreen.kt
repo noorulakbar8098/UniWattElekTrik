@@ -140,9 +140,21 @@ fun SpareItemFormScreen(
 
     var nameError by remember { mutableStateOf("") }
 
-    var selDept  by remember(initial) { mutableStateOf(departments.first()) }
-    var selEquip by remember(initial) {
-        mutableStateOf(allEquipment.firstOrNull { it.departmentId == selDept.id } ?: allEquipment.first())
+    var selDept  by remember(initial, departments) {
+        mutableStateOf(
+            departments.firstOrNull { it.id == initial?.departmentId }
+                ?: departments.firstOrNull { it.name == initial?.departmentName }
+                ?: departments.first()
+        )
+    }
+    var selEquip by remember(initial, allEquipment, selDept) {
+        val deptEquip = allEquipment.filter { it.departmentId == selDept.id }
+        mutableStateOf(
+            deptEquip.firstOrNull { it.id == initial?.equipmentId }
+                ?: deptEquip.firstOrNull { it.name == initial?.equipmentName }
+                ?: deptEquip.firstOrNull()
+                ?: allEquipment.first()
+        )
     }
 
     // Reconcile selection when live taxonomy first arrives (or changes) so we
@@ -404,10 +416,21 @@ fun SpareItemFormScreen(
                         vendorContact1 = vContact1.trim(),
                         vendorAddress1 = vAddr1.trim(),
                         vendorLocation = vLoc.trim(),
+                        departmentId   = selDept.id,
+                        departmentName = selDept.name,
+                        equipmentId    = selEquip.id,
+                        equipmentName  = selEquip.name,
                     ))
                 }
             },
             modifier = Modifier.align(Alignment.BottomCenter),
+        )
+
+        val actionInProgress by (inventoryVm?.actionInProgress?.collectAsStateWithLifecycle()
+            ?: remember { androidx.compose.runtime.mutableStateOf(false) })
+        com.example.uniwattelektrik.core.components.LoadingOverlay(
+            visible = actionInProgress,
+            message = if (initial == null) "Saving spare…" else "Updating spare…",
         )
     }
 }
@@ -418,30 +441,11 @@ fun SpareItemFormScreen(
 
 @Composable
 private fun GradientHeader(title: String, onBack: () -> Unit) {
-    com.example.uniwattelektrik.core.components.PremiumHeaderBackground(
-        roundedBottom = false,
-    ) {
-        Column(
-            modifier = Modifier
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 18.dp, vertical = 16.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                com.example.uniwattelektrik.core.components.GlassBackButton(
-                    onClick = onBack,
-                )
-
-                Spacer(Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(title, color = Color.White,
-                         fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text("INVENTORY MANAGEMENT",
-                         color = Color(0xCCFFFFFF), fontSize = 11.sp,
-                         fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp)
-                }
-            }
-        }
-    }
+    com.example.uniwattelektrik.core.components.OperationsHeader(
+        eyebrow = "INVENTORY MANAGEMENT",
+        title   = title,
+        onBack  = onBack,
+    )
 }
 
 /* ─────────────────────────────────────────────────────────────────────── *

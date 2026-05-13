@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.sp
 import com.example.uniwattelektrik.core.components.AppPullToRefresh
 import com.example.uniwattelektrik.core.components.EmptyState
 import com.example.uniwattelektrik.core.components.InventoryScreenHeader
+import com.example.uniwattelektrik.core.components.LoadingOverlay
 import com.example.uniwattelektrik.core.components.PremiumGradientFab
 import com.example.uniwattelektrik.core.components.PremiumHeaderStatusBarColor
 import com.example.uniwattelektrik.core.theme.AppTheme
@@ -83,6 +84,7 @@ fun EquipmentScreen(
 
     val departments by inventoryVm.departments.collectAsState()
     val equipment   by inventoryVm.equipment.collectAsState()
+    val actionInProgress by inventoryVm.actionInProgress.collectAsState()
 
     var selectedDept  by remember { mutableStateOf<Department?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
@@ -216,6 +218,8 @@ fun EquipmentScreen(
 
         // ── FAB ──────────────────────────────────────────────────────────────
         PremiumGradientFab(onClick = { showAddDialog = true })
+
+        LoadingOverlay(visible = actionInProgress, message = "Please wait…")
     }
 }
 

@@ -1,5 +1,6 @@
 package com.example.uniwattelektrik.feature.user.presentation.screens
 
+import com.example.uniwattelektrik.core.components.ToastController
 import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
 
 import androidx.compose.animation.animateColorAsState
@@ -35,11 +36,18 @@ import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.style.TextOverflow
+import com.example.uniwattelektrik.platform.nowEpochMillis
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -65,6 +73,7 @@ import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewM
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlin.time.Clock
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -119,6 +128,7 @@ private enum class LeaveTab { Apply, History, Balance }
  *  LeaveScreen
  * ═══════════════════════════════════════════════════════════════════════════ */
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LeaveScreen(
     workforceVm  : WorkforceViewModel,
@@ -127,62 +137,402 @@ fun LeaveScreen(
     employeeName : String,
     department   : String = "",
     modifier     : Modifier = Modifier,
+    onBack       : () -> Unit = {},
 ) {
     TrackScreenPerformance("LeaveScreen")
-    var tab by remember { mutableStateOf(LeaveTab.Apply) }
     val leaveRequests by workforceVm.leaveRequests.collectAsStateWithLifecycle()
+    val actionInProgress by workforceVm.actionInProgress.collectAsStateWithLifecycle()
 
     SetStatusBar(color = AppTheme.Bg, darkIcons = true)
 
-    Column(modifier = modifier.fillMaxSize().background(appScreenBackground())) {
+    // ── Apply-form bottom sheet state ───────────────────────────────────
+    var applyOpen by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-        // Header + tab pills
-        Column(
+    // ── "All" toggle — collapses to 3, expands to all ───────────────────
+    var showAll by remember { mutableStateOf(false) }
+
+    // ── Balance maths: used = sum of approved totalDays per type ────────
+    val usedByType = remember(leaveRequests) {
+        leaveRequests
+            .filter { it.status.equals("approved", ignoreCase = true) }
+            .groupBy { it.leaveType }
+            .mapValues { (_, list) -> list.sumOf { it.totalDays } }
+    }
+
+    // FY label — Apr→Mar Indian fiscal-year window.
+    val fyLabel = remember {
+        val now = Instant.fromEpochMilliseconds(nowEpochMillis())
+            .toLocalDateTime(TimeZone.currentSystemDefault())
+        val fyStart = if (now.monthNumber >= 4) now.year else now.year - 1
+        "FY $fyStart"
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize().background(appScreenBackground())) {
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(AppTheme.Surface)
-                .shadow(2.dp, RoundedCornerShape(0.dp), clip = false)
                 .windowInsetsPadding(WindowInsets.statusBars)
                 .padding(horizontal = AppTheme.SpLg, vertical = AppTheme.SpMd),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(AppTheme.SpMd),
         ) {
-            Text(
-                "My Leave",
-                style = AppTypography.displayMedium.copy(color = AppTheme.Ink900),
-            )
-            Spacer(Modifier.height(AppTheme.SpMd))
+            // Back chip
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .shadow(2.dp, RoundedCornerShape(12.dp), spotColor = Color(0x14000000))
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(AppTheme.Surface)
+                    .border(1.dp, AppTheme.Ink100, RoundedCornerShape(12.dp))
+                    .clickable(onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint               = AppTheme.Ink900,
+                    modifier           = Modifier.size(20.dp),
+                )
+            }
 
+            // Title block
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    fyLabel,
+                    style = AppTypography.labelSmall.copy(
+                        color         = AppTheme.Ink500,
+                        letterSpacing = 1.4.sp,
+                    ),
+                )
+                Text(
+                    "Leave",
+                    style = AppTypography.displayMedium.copy(color = AppTheme.Ink900),
+                )
+            }
+
+            // + Apply CTA
             Row(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp)
-                    .clip(AppShapes.large)
-                    .background(AppTheme.Ink50)
-                    .padding(3.dp),
+                    .clip(RoundedCornerShape(50))
+                    .background(
+                        Brush.horizontalGradient(listOf(AppTheme.Brand, AppTheme.Brand700))
+                    )
+                    .clickable { applyOpen = true }
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment     = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                LeaveTab.entries.forEach { t ->
-                    TabPill(
-                        label    = t.name,
-                        selected = tab == t,
-                        onClick  = { tab = t },
-                        modifier = Modifier.weight(1f),
+                Icon(
+                    Icons.Filled.Add,
+                    contentDescription = null,
+                    tint               = Color.White,
+                    modifier           = Modifier.size(16.dp),
+                )
+                Text(
+                    "Apply",
+                    style = AppTypography.labelLarge.copy(
+                        color      = Color.White,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                )
+            }
+        }
+
+        // ── Body (scrollable) ──────────────────────────────────────────
+        LazyColumn(
+            modifier            = Modifier.fillMaxSize(),
+            contentPadding      = PaddingValues(
+                start  = AppTheme.SpLg,
+                end    = AppTheme.SpLg,
+                top    = AppTheme.SpSm,
+                bottom = 110.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(AppTheme.SpMd),
+        ) {
+            // 1. Balance cards row.
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    LeaveBalanceCard(
+                        modifier  = Modifier.weight(1f),
+                        label     = "Casual",
+                        used      = usedByType["Casual"] ?: 0,
+                        total     = LEAVE_BALANCES["Casual"] ?: 0,
+                        gradient  = listOf(Color(0xFF60A5FA), Color(0xFF1D4ED8)),
+                    )
+                    LeaveBalanceCard(
+                        modifier  = Modifier.weight(1f),
+                        label     = "Sick",
+                        used      = usedByType["Sick"] ?: 0,
+                        total     = LEAVE_BALANCES["Sick"] ?: 0,
+                        gradient  = listOf(Color(0xFFFBBF24), Color(0xFFD97706)),
+                    )
+                    LeaveBalanceCard(
+                        modifier  = Modifier.weight(1f),
+                        label     = "Earned",
+                        used      = usedByType["Earned"] ?: 0,
+                        total     = LEAVE_BALANCES["Earned"] ?: 0,
+                        gradient  = listOf(Color(0xFF34D399), Color(0xFF059669)),
                     )
                 }
             }
-        }
 
-        Box(modifier = Modifier.weight(1f)) {
-            when (tab) {
-                LeaveTab.Apply   -> LeaveApplyTab(
-                    workforceVm  = workforceVm,
-                    userId       = userId,
-                    adminId      = adminId,
-                    employeeName = employeeName,
-                    department   = department,
-                )
-                LeaveTab.History -> LeaveHistoryTab(requests = leaveRequests)
-                LeaveTab.Balance -> LeaveBalanceTab(requests = leaveRequests)
+            // 2. Section header.
+            item {
+                Spacer(Modifier.height(AppTheme.SpSm))
+                Row(
+                    verticalAlignment     = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier              = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "Recent applications",
+                        style = AppTypography.titleLarge.copy(
+                            color      = AppTheme.Ink900,
+                            fontWeight = FontWeight.ExtraBold,
+                        ),
+                    )
+                    if (leaveRequests.size > 3) {
+                        Text(
+                            text     = if (showAll) "Less ←" else "All →",
+                            style    = AppTypography.labelLarge.copy(
+                                color      = AppTheme.Brand,
+                                fontWeight = FontWeight.Bold,
+                            ),
+                            modifier = Modifier.clickable { showAll = !showAll },
+                        )
+                    }
+                }
+            }
+
+            // 3. Application list.
+            val visible = leaveRequests
+                .sortedByDescending { it.fromDateMs }
+                .let { if (showAll) it else it.take(3) }
+
+            if (visible.isEmpty()) {
+                item {
+                    Box(
+                        modifier         = Modifier
+                            .fillMaxWidth()
+                            .clip(AppShapes.card)
+                            .background(AppTheme.Surface)
+                            .padding(28.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "No leave applications yet — tap + Apply to start.",
+                            style = AppTypography.bodyMedium.copy(color = AppTheme.Ink500),
+                        )
+                    }
+                }
+            } else {
+                items(visible, key = { it.id }) { req ->
+                    LeaveApplicationCard(req)
+                }
             }
         }
+    }
+
+    // ── Apply form bottom sheet ─────────────────────────────────────────
+    if (applyOpen) {
+        ModalBottomSheet(
+            onDismissRequest = { applyOpen = false },
+            sheetState       = sheetState,
+            containerColor   = AppTheme.Bg,
+            shape            = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        ) {
+            LeaveApplyTab(
+                workforceVm  = workforceVm,
+                userId       = userId,
+                adminId      = adminId,
+                employeeName = employeeName,
+                department   = department,
+                onSubmitted  = { applyOpen = false },
+            )
+        }
+    }
+        com.example.uniwattelektrik.core.components.LoadingOverlay(
+            visible = actionInProgress,
+            message = "Submitting…",
+        )
+    }
+}
+
+/* ─── Balance card (gradient tile with decorative bubbles) ─────────────── */
+
+@Composable
+private fun LeaveBalanceCard(
+    label   : String,
+    used    : Int,
+    total   : Int,
+    gradient: List<Color>,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .height(104.dp)
+            .shadow(8.dp, RoundedCornerShape(20.dp), spotColor = gradient.last().copy(alpha = 0.35f))
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.linearGradient(gradient),
+            )
+            .padding(14.dp),
+    ) {
+        // Decorative translucent bubbles (top-right premium feel)
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .size(64.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.10f)),
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 22.dp, end = 22.dp)
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.08f)),
+        )
+
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                label,
+                style = AppTypography.labelLarge.copy(
+                    color      = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+            )
+            Text(
+                used.toString().padStart(2, '0'),
+                style = AppTypography.displayLarge.copy(
+                    color         = Color.White,
+                    fontWeight    = FontWeight.ExtraBold,
+                    fontSize      = 30.sp,
+                    letterSpacing = (-0.6).sp,
+                ),
+            )
+            Text(
+                "/ $total days",
+                style = AppTypography.bodySmall.copy(
+                    color = Color.White.copy(alpha = 0.85f),
+                ),
+            )
+        }
+    }
+}
+
+/* ─── Recent application card ──────────────────────────────────────────── */
+
+@Composable
+private fun LeaveApplicationCard(req: LeaveRecord) {
+    val (title, body) = remember(req.reason) { splitReason(req.reason, req.leaveType) }
+    val statusColor = when (req.status.lowercase()) {
+        "approved" -> AppTheme.Success
+        "rejected" -> AppTheme.Danger
+        else       -> AppTheme.Warning
+    }
+    val statusBg = when (req.status.lowercase()) {
+        "approved" -> AppTheme.SuccessBg
+        "rejected" -> AppTheme.DangerBg
+        else       -> AppTheme.WarningBg
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(4.dp, AppShapes.card, spotColor = Color(0x14000000))
+            .clip(AppShapes.card)
+            .background(AppTheme.Surface)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            verticalAlignment     = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier              = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text     = title,
+                    style    = AppTypography.titleSmall.copy(
+                        color      = AppTheme.Ink900,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text  = "${formatRange(req.fromDateMs, req.toDateMs)}  ·  ${req.totalDays} day${if (req.totalDays == 1) "" else "s"}  ·  ${req.leaveType.uppercase()}",
+                    style = AppTypography.bodySmall.copy(color = AppTheme.Ink500),
+                )
+            }
+            // Status pill
+            Row(
+                modifier              = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(statusBg)
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment     = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(statusColor))
+                Text(
+                    text  = req.status.replaceFirstChar { it.uppercase() },
+                    style = AppTypography.labelSmall.copy(
+                        color      = statusColor,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                )
+            }
+        }
+
+        if (body.isNotBlank()) {
+            // Hairline divider above the body line.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(AppTheme.Ink100),
+            )
+            Text(
+                text  = body,
+                style = AppTypography.bodyMedium.copy(color = AppTheme.Ink700),
+            )
+        }
+    }
+}
+
+/* ─── Helpers ──────────────────────────────────────────────────────────── */
+
+/** Split the freeform reason into a short title (first sentence) + body. */
+private fun splitReason(reason: String, leaveType: String): Pair<String, String> {
+    val r = reason.trim()
+    if (r.isEmpty()) return leaveType to ""
+    val firstStop = r.indexOf('.').takeIf { it in 1 until 80 } ?: -1
+    return if (firstStop > 0) {
+        r.substring(0, firstStop).trim() to r.substring(firstStop + 1).trim()
+    } else if (r.length > 60) {
+        r.take(60).trimEnd() + "…" to r
+    } else {
+        r to ""
+    }
+}
+
+/** Format a from/to range like "14 — 15 Apr" or "14 Apr — 2 May". */
+private fun formatRange(fromMs: Long, toMs: Long): String {
+    val tz = TimeZone.currentSystemDefault()
+    val from = Instant.fromEpochMilliseconds(fromMs).toLocalDateTime(tz).date
+    val to   = Instant.fromEpochMilliseconds(toMs).toLocalDateTime(tz).date
+    val sameMonth = from.month == to.month && from.year == to.year
+    return if (from == to) {
+        "${from.dayOfMonth} ${MONTHS[from.monthNumber - 1]}"
+    } else if (sameMonth) {
+        "${from.dayOfMonth} — ${to.dayOfMonth} ${MONTHS[from.monthNumber - 1]}"
+    } else {
+        "${from.dayOfMonth} ${MONTHS[from.monthNumber - 1]} — ${to.dayOfMonth} ${MONTHS[to.monthNumber - 1]}"
     }
 }
 
@@ -225,6 +575,7 @@ private fun LeaveApplyTab(
     adminId      : String,
     employeeName : String,
     department   : String,
+    onSubmitted  : () -> Unit = {},
 ) {
     var selectedType    by remember { mutableStateOf("Casual") }
     var fromDateMs      by remember { mutableStateOf<Long?>(null) }
@@ -468,13 +819,25 @@ private fun LeaveApplyTab(
                             result
                                 .onSuccess {
                                     submitSuccess = true
+                                    ToastController.info(
+                                        title = "Leave application sent",
+                                        body  = "$totalDays-day $selectedType leave · awaiting approval",
+                                    )
                                     // Reset form
                                     selectedType = "Casual"
                                     fromDateMs   = null
                                     toDateMs     = null
                                     reason       = ""
+                                    // Close the host (e.g. bottom sheet).
+                                    onSubmitted()
                                 }
-                                .onFailure { submitError = it.message }
+                                .onFailure {
+                                    submitError = it.message
+                                    ToastController.error(
+                                        title = "Couldn't send leave request",
+                                        body  = it.message ?: "Please check your connection and try again",
+                                    )
+                                }
                         }
                     },
                 contentAlignment = Alignment.Center,

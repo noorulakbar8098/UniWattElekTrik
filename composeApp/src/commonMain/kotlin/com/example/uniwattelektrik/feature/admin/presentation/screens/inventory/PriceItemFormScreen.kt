@@ -390,30 +390,11 @@ fun PriceItemFormScreen(
 
 @Composable
 private fun GradientHeader(title: String, onBack: () -> Unit) {
-    com.example.uniwattelektrik.core.components.PremiumHeaderBackground(
-        roundedBottom = false,
-    ) {
-        Column(
-            modifier = Modifier
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 18.dp, vertical = 16.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                com.example.uniwattelektrik.core.components.GlassBackButton(
-                    onClick = onBack,
-                )
-
-                Spacer(Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(title, color = Color.White,
-                         fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text("INVENTORY MANAGEMENT",
-                         color = Color(0xCCFFFFFF), fontSize = 11.sp,
-                         fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp)
-                }
-            }
-        }
-    }
+    com.example.uniwattelektrik.core.components.OperationsHeader(
+        eyebrow = "INVENTORY MANAGEMENT",
+        title   = title,
+        onBack  = onBack,
+    )
 }
 
 /* ─────────────────────────────────────────────────────────────────────── *

@@ -25,6 +25,33 @@ actual class LinkLauncher {
         val url = NSURL.URLWithString(urlStr) ?: return
         UIApplication.sharedApplication.openURL(url)
     }
+
+    actual fun openMap(lat: Double, lng: Double, label: String) {
+        // Prefer Apple Maps via the `https://maps.apple.com/?ll=…` deep link —
+        // iOS routes that URL straight to the native Maps app. If the user
+        // doesn't have Apple Maps (rare; it's pre-installed) we fall back to
+        // the Google Maps web URL which any iOS browser can open.
+        val allowed: NSCharacterSet = NSCharacterSet.URLQueryAllowedCharacterSet
+        val labelEncoded = if (label.isNotBlank()) {
+            NSString.create(string = label)
+                .stringByAddingPercentEncodingWithAllowedCharacters(allowed) ?: ""
+        } else ""
+
+        val appleMaps = if (labelEncoded.isNotBlank()) {
+            "https://maps.apple.com/?ll=$lat,$lng&q=$labelEncoded"
+        } else {
+            "https://maps.apple.com/?ll=$lat,$lng&q=$lat,$lng"
+        }
+        val primary = NSURL.URLWithString(appleMaps)
+        if (primary != null && UIApplication.sharedApplication.canOpenURL(primary)) {
+            UIApplication.sharedApplication.openURL(primary)
+            return
+        }
+        val fallback = NSURL.URLWithString(
+            "https://www.google.com/maps/search/?api=1&query=$lat,$lng",
+        ) ?: return
+        UIApplication.sharedApplication.openURL(fallback)
+    }
 }
 
 

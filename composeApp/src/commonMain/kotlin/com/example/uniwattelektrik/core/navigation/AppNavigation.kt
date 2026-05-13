@@ -47,9 +47,15 @@ sealed interface AdminRoute {
 
     data class EmployeeDetail(val employeeId: String) : AdminRoute
     data class EditEmployee(val employeeId: String) : AdminRoute
+    /** Per-employee attendance month-grid + leave timeline. */
+    data class EmployeeAttendanceDetail(val userId: String) : AdminRoute
     data class TaskDetail(val taskId: String) : AdminRoute
     data object Notifications        : AdminRoute
     data object Financials           : AdminRoute
+    /** Aggregated client-side derived alerts (overdue, late, low stock…). */
+    data object Alerts               : AdminRoute
+    /** Monthly report (employees · tasks · stock) with CSV export. */
+    data object Reports              : AdminRoute
     /**
      * The task creation/edit form. When [editTaskId] is non-null the form
      * prefills its fields from the live [TaskRecord] and saves via

@@ -1,5 +1,6 @@
 package com.example.uniwattelektrik.feature.user.presentation.screens
 
+import com.example.uniwattelektrik.core.components.ToastController
 import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
 
 import com.example.uniwattelektrik.core.theme.appScreenBackground
@@ -39,16 +40,20 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -73,8 +78,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.uniwattelektrik.core.components.EmptyState
 import com.example.uniwattelektrik.core.sample.SampleTasks
 import com.example.uniwattelektrik.core.platform.rememberAttachmentLauncher
+import com.example.uniwattelektrik.core.platform.rememberJobCardExporter
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskNote
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
+import com.example.uniwattelektrik.feature.workforce.data.remote.allAssigneeIds
+import com.example.uniwattelektrik.feature.workforce.data.remote.allAssigneeNames
+import com.example.uniwattelektrik.core.components.DsAvatarBubble
+import com.example.uniwattelektrik.core.components.DsAvatarStack
+import androidx.compose.animation.animateContentSize
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
 import com.example.uniwattelektrik.platform.LocationProvider
 import kotlinx.coroutines.launch
@@ -157,21 +170,69 @@ fun TaskDetailScreen(
             .collectAsStateWithLifecycle())
     var newNote by remember { mutableStateOf("") }
     var descExpanded by remember { mutableStateOf(false) }
+    var assigneesExpanded by remember { mutableStateOf(false) }
     var isUploadingAttachment by remember { mutableStateOf(false) }
 
-    // Attachment picker — Gallery + Camera.
-    val attachmentLauncher = rememberAttachmentLauncher { uri ->
-        val current = live ?: return@rememberAttachmentLauncher
+    // Voice notes — recorder for capturing new clips, player for inline
+    // playback of clips others have posted. Both are device-local; recorded
+    // audio is uploaded to Cloudinary and the URL is stored on the TaskNote.
+    val voiceRecorder = com.example.uniwattelektrik.core.platform.rememberVoiceRecorder()
+    val voicePlayer   = com.example.uniwattelektrik.core.platform.rememberVoicePlayer()
+    // Per-second tick so the recording label updates smoothly.
+    var recordingTickMs by remember { mutableStateOf(0L) }
+    androidx.compose.runtime.LaunchedEffect(voiceRecorder.isRecording) {
+        while (voiceRecorder.isRecording) {
+            recordingTickMs = voiceRecorder.elapsedMs
+            kotlinx.coroutines.delay(200)
+        }
+        recordingTickMs = 0L
+    }
+
+    // Job-card PDF exporter + live spare-items catalog for unit prices.
+    val shareJobCard = rememberJobCardExporter()
+    val spareItems by (workforceVm?.spareItems?.collectAsStateWithLifecycle()
+        ?: remember {
+            kotlinx.coroutines.flow.MutableStateFlow(
+                emptyList<com.example.uniwattelektrik.feature.workforce.data.remote.SpareItemRecord>()
+            )
+        }.collectAsStateWithLifecycle())
+
+    // Attachment upload — extracted so the toast RETRY action can re-invoke it
+    // with the same URI on failure (network blip, etc.).
+    fun uploadAttachmentUri(uri: String) {
+        val current = live ?: return
         isUploadingAttachment = true
         workforceVm?.uploadAttachment(
             adminId    = adminUid.ifBlank { current.adminId },
             contentUri = uri,
         ) { result ->
             isUploadingAttachment = false
-            result.onSuccess { newUrl ->
-                workforceVm.updateAttachments(current.id, current.attachments + newUrl)
-            }
+            result
+                .onSuccess { newUrl ->
+                    workforceVm.updateAttachments(current.id, current.attachments + newUrl)
+                }
+                .onFailure { err ->
+                    ToastController.error(
+                        title       = "Photo upload failed",
+                        body        = err.message?.takeIf { it.isNotBlank() }
+                            ?: "Network unavailable · tap retry",
+                        actionLabel = "Retry",
+                        onAction    = { uploadAttachmentUri(uri) },
+                    )
+                }
         }
+    }
+
+    // Photo annotation — when a picker returns a URI, route it through the
+    // annotator overlay first so the technician can highlight defects with a
+    // coloured pen before the photo is flattened + uploaded. The overlay is
+    // dismissable: cancel → no upload, done → upload the annotated copy.
+    var pendingAnnotationUri by remember { mutableStateOf<String?>(null) }
+
+    // Attachment picker — Gallery + Camera. The picked URI is staged for
+    // annotation; uploadAttachmentUri is only called once the user taps Done.
+    val attachmentLauncher = rememberAttachmentLauncher { uri ->
+        pendingAnnotationUri = uri
     }
 
     val scope = rememberCoroutineScope()
@@ -233,6 +294,26 @@ fun TaskDetailScreen(
                 }
             }
             Spacer(Modifier.height(16.dp))
+        }
+
+        // Assignees card — shows avatar stack (collapsed) and click to expand
+        // the full per-assignee list with name + initials avatar. Hidden when
+        // the task has no assignees at all.
+        live?.let { rec ->
+            val names = rec.allAssigneeNames()
+            val ids   = rec.allAssigneeIds()
+            if (names.isNotEmpty() || ids.isNotEmpty()) {
+                item {
+                    Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                        AssigneesCard(
+                            names    = names,
+                            expanded = assigneesExpanded,
+                            onToggle = { assigneesExpanded = !assigneesExpanded },
+                        )
+                    }
+                    Spacer(Modifier.height(16.dp))
+                }
+            }
         }
 
         // Activity timeline card — built from live TaskRecord timestamps.
@@ -357,13 +438,16 @@ fun TaskDetailScreen(
                         } else {
                             liveNotes.forEach { n ->
                                 NoteRow(
-                                    NoteItem(
-                                        author    = n.authorName.ifBlank { "—" },
-                                        initials  = noteInitials(n.authorName),
-                                        tint      = if (n.role == "admin") Brand else Purple,
-                                        timestamp = formatNoteTime(n.createdAtMs),
-                                        message   = n.message,
-                                    )
+                                    note = NoteItem(
+                                        author          = n.authorName.ifBlank { "—" },
+                                        initials        = noteInitials(n.authorName),
+                                        tint            = if (n.role == "admin") Brand else Purple,
+                                        timestamp       = formatNoteTime(n.createdAtMs),
+                                        message         = n.message,
+                                        voiceUrl        = n.voiceUrl,
+                                        voiceDurationMs = n.voiceDurationMs,
+                                    ),
+                                    player = voicePlayer,
                                 )
                             }
                         }
@@ -381,6 +465,55 @@ fun TaskDetailScreen(
                                         message    = msg,
                                     )
                                     newNote = ""
+                                }
+                            },
+                            isRecording       = voiceRecorder.isRecording,
+                            recordingMs       = recordingTickMs,
+                            // MediaRecorder.prepare()/start()/stop() are
+                            // synchronous native calls that can take hundreds
+                            // of ms on budget chipsets. Running them on the
+                            // main thread was triggering ANRs ("Waited 5s for
+                            // MotionEvent"). The recorder API is now suspend;
+                            // we launch onto the screen scope which is Main-
+                            // dispatched and the recorder hops to IO inside.
+                            onStartRecording  = { scope.launch { voiceRecorder.start() } },
+                            onCancelRecording = { voiceRecorder.cancel() },
+                            onStopRecording   = {
+                                scope.launch {
+                                    val rec = voiceRecorder.stop()
+                                    if (rec != null && workforceVm != null && currentUserId.isNotBlank()) {
+                                        workforceVm.postVoiceNote(
+                                            adminId    = adminUid.ifBlank { live?.adminId ?: "" },
+                                            taskId     = taskId,
+                                            authorId   = currentUserId,
+                                            authorName = currentUserName.ifBlank { "—" },
+                                            role       = if (viewerRole == TaskDetailRole.Admin) "admin" else "user",
+                                            contentUri = rec.contentUri,
+                                            durationMs = rec.durationMs,
+                                        ) { result ->
+                                            result.fold(
+                                                onSuccess = {
+                                                    ToastController.success(
+                                                        title = "Voice note posted",
+                                                        body  = "Audio uploaded and delivered.",
+                                                    )
+                                                },
+                                                onFailure = { err ->
+                                                    ToastController.error(
+                                                        title = "Voice note failed",
+                                                        body  = err.message?.takeIf { it.isNotBlank() }
+                                                            ?: "Upload failed · check your connection.",
+                                                    )
+                                                },
+                                            )
+                                        }
+                                    } else if (rec == null) {
+                                        ToastController.error(
+                                            title = "Recording failed",
+                                            body  = voiceRecorder.lastError
+                                                ?: "Please try again.",
+                                        )
+                                    }
                                 }
                             },
                         )
@@ -470,6 +603,43 @@ fun TaskDetailScreen(
                                 }
                             }
                         }
+                        Spacer(Modifier.height(12.dp))
+                        // Job-card PDF export — branded one-page completion
+                        // certificate that admins hand to customers. Renders
+                        // off the live task + spare-items prices on Android;
+                        // iOS is a no-op stub until we ship a native renderer.
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(AppShapes.pill)
+                                .background(Brand)
+                                .clickable {
+                                    val prices = spareItems.associate { it.id to it.price }
+                                    val filename = "uniwatt-jobcard-${live.id.take(8)}.pdf"
+                                    shareJobCard(live, prices, filename)
+                                    ToastController.info(
+                                        title = "Job card ready",
+                                        body  = "PDF generated for ${live.title.take(40)}",
+                                    )
+                                }
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                            verticalAlignment     = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            Icon(
+                                Icons.Filled.IosShare,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(15.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Share job card (PDF)",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
                     }
                 }
                 Spacer(Modifier.height(16.dp))
@@ -478,9 +648,29 @@ fun TaskDetailScreen(
 
         // Location card
         item {
+            // Resolve coordinates from the live TaskRecord first (most up-to-
+            // date), fall back to whatever we mapped onto the SampleTask.
+            val mapLat = live?.latitude ?: task.latitude
+            val mapLng = live?.longitude ?: task.longitude
+            val hasCoords = mapLat != null && mapLng != null
+            val mapLauncher = remember { com.example.uniwattelektrik.platform.LinkLauncher() }
+            val openMaps: () -> Unit = {
+                if (hasCoords) {
+                    mapLauncher.openMap(mapLat!!, mapLng!!, label = task.location)
+                }
+            }
             Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                SectionCard(title = "Location", trailingAction = "Open in Maps") {
-                    Row(verticalAlignment = Alignment.Top) {
+                SectionCard(
+                    title          = "Location",
+                    trailingAction = if (hasCoords) "Open in Maps" else null,
+                    onTrailing     = openMaps,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.Top,
+                        modifier          = Modifier.then(
+                            if (hasCoords) Modifier.clickable(onClick = openMaps) else Modifier,
+                        ),
+                    ) {
                         Box(
                             modifier = Modifier
                                 .size(40.dp).clip(RoundedCornerShape(12.dp))
@@ -497,6 +687,14 @@ fun TaskDetailScreen(
                             Spacer(Modifier.height(2.dp))
                             Text(task.location, color = InkPrimary,
                                  fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            if (hasCoords) {
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "${formatLatLng5(mapLat!!)}, ${formatLatLng5(mapLng!!)}",
+                                    color = InkSecondary,
+                                    fontSize = 11.sp,
+                                )
+                            }
                         }
                         Icon(Icons.AutoMirrored.Filled.OpenInNew, null,
                              tint = Brand, modifier = Modifier.size(20.dp))
@@ -507,7 +705,11 @@ fun TaskDetailScreen(
                         modifier = Modifier
                             .fillMaxWidth().height(140.dp)
                             .clip(RoundedCornerShape(14.dp))
-                            .background(Color(0xFFE8EFFA)),
+                            .background(Color(0xFFE8EFFA))
+                            .then(
+                                if (hasCoords) Modifier.clickable(onClick = openMaps)
+                                else Modifier,
+                            ),
                         contentAlignment = Alignment.Center,
                     ) {
                         Column(
@@ -531,6 +733,42 @@ fun TaskDetailScreen(
                                  tint = Color.White, modifier = Modifier.size(20.dp))
                         }
                     }
+
+                    // Explicit primary CTA below the map preview — opens the
+                    // platform's preferred maps app at the exact pin.
+                    Spacer(Modifier.height(12.dp))
+                    if (hasCoords) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Brand)
+                                .clickable(onClick = openMaps)
+                                .padding(vertical = 12.dp),
+                            verticalAlignment     = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            Icon(
+                                Icons.Filled.LocationOn,
+                                contentDescription = null,
+                                tint     = Color.White,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Open in Google Maps",
+                                color      = Color.White,
+                                fontSize   = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    } else {
+                        Text(
+                            "No coordinates recorded for this site yet.",
+                            color    = InkSecondary,
+                            fontSize = 12.sp,
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(20.dp))
@@ -549,6 +787,9 @@ fun TaskDetailScreen(
                     locationProvider = locationProvider,
                     scope      = scope,
                     onStartWork = onStartWork,
+                    siteLat    = live.latitude,
+                    siteLng    = live.longitude,
+                    siteLabel  = live.location,
                 )
             }
         }
@@ -556,6 +797,19 @@ fun TaskDetailScreen(
 
     fullscreenAttachment?.let { url ->
         AttachmentFullscreenDialog(url = url, onDismiss = { fullscreenAttachment = null })
+    }
+
+    // Photo annotation overlay — appears full-screen once the picker has
+    // returned a URI. Cancel discards; Done uploads the flattened JPEG.
+    pendingAnnotationUri?.let { uri ->
+        com.example.uniwattelektrik.core.components.PhotoAnnotatorOverlay(
+            sourceUri = uri,
+            onCancel  = { pendingAnnotationUri = null },
+            onDone    = { annotatedUri ->
+                pendingAnnotationUri = null
+                uploadAttachmentUri(annotatedUri)
+            },
+        )
     }
 }
 
@@ -570,15 +824,10 @@ private fun TaskHeader(
     onBack: () -> Unit,
     onEdit: (() -> Unit)? = null,
 ) {
-    com.example.uniwattelektrik.core.components.PremiumHeaderBackground(
-        roundedBottom = false,
+    com.example.uniwattelektrik.core.components.OperationsHeaderSurface(
+        horizontalPadding = 18.dp,
+        bottomPadding     = 60.dp,
     ) {
-        Column(
-            modifier = Modifier
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 18.dp)
-                .padding(top = 14.dp, bottom = 60.dp),
-        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 com.example.uniwattelektrik.core.components.GlassBackButton(
                     onClick = onBack,
@@ -587,8 +836,8 @@ private fun TaskHeader(
                 Text(
                     "Task Details",
                     color = Color.White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontSize = 24.sp,           // canonical header title size
+                    fontWeight = FontWeight.ExtraBold,
                     modifier = Modifier.weight(1f),
                 )
                 // Admin-only edit action — hidden entirely for User viewers.
@@ -702,7 +951,6 @@ private fun TaskHeader(
                 }
             }
         }
-    }
 }
 
 @Composable
@@ -856,6 +1104,128 @@ private fun SectionCard(
 }
 
 /* ─────────────────────────────────────────────────────────────────────── *
+ *  ASSIGNEES CARD — avatar stack + collapsible per-assignee list
+ * ─────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Compact summary row when collapsed: avatar stack + "N assignees" label +
+ * chevron. Tapping expands an inline list with each assignee's avatar bubble
+ * and full name, animated via [animateContentSize].
+ */
+@Composable
+private fun AssigneesCard(
+    names    : List<String>,
+    expanded : Boolean,
+    onToggle : () -> Unit,
+) {
+    val initialsList = names.map { initialsFor(it) }
+    val count        = names.size
+    val label        = when (count) {
+        0    -> "Unassigned"
+        1    -> names.first()
+        else -> "$count assignees"
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(10.dp, RoundedCornerShape(20.dp), spotColor = ShadowSoft)
+            .clip(RoundedCornerShape(20.dp))
+            .background(CardBg)
+            .clickable(onClick = onToggle)
+            .animateContentSize()
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .height(16.dp).width(3.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Brand),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Assignees",
+                color = InkPrimary,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            if (initialsList.isNotEmpty()) {
+                if (initialsList.size == 1) {
+                    DsAvatarBubble(initials = initialsList.first(), size = 32.dp)
+                } else {
+                    DsAvatarStack(
+                        initialsList = initialsList,
+                        size         = 32.dp,
+                        maxVisible   = 4,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+            }
+            Icon(
+                imageVector = if (expanded) Icons.Filled.KeyboardArrowUp
+                              else Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = InkSecondary,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+
+        if (count > 1 || (count == 1 && expanded)) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                label,
+                color = InkSecondary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+
+        if (expanded && names.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                names.forEachIndexed { i, name ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        DsAvatarBubble(
+                            initials = initialsList.getOrElse(i) { "?" },
+                            size     = 36.dp,
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                name.ifBlank { "Unnamed" },
+                                color = InkPrimary,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                if (i == 0) "Primary assignee" else "Co-assignee",
+                                color = InkSecondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Two-letter uppercase initials for a full name. */
+private fun initialsFor(name: String): String {
+    val parts = name.trim().split(' ', '\t', '_', '.', '-').filter { it.isNotBlank() }
+    return when {
+        parts.size >= 2 -> "${parts[0].first()}${parts[1].first()}".uppercase()
+        parts.size == 1 -> parts[0].first().uppercase().toString()
+        else            -> "?"
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────── *
  *  TIMELINE
  * ─────────────────────────────────────────────────────────────────────── */
 
@@ -936,23 +1306,11 @@ private fun ChecklistRow(item: ChecklistItem, onToggle: () -> Unit) {
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(20.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(if (item.done) Success else Color.White)
-                .border(
-                    width = if (item.done) 0.dp else 1.5.dp,
-                    color = if (item.done) Success else DividerSoft,
-                    shape = RoundedCornerShape(6.dp),
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (item.done) {
-                Icon(Icons.Filled.Check, null, tint = Color.White,
-                     modifier = Modifier.size(14.dp))
-            }
-        }
+        com.example.uniwattelektrik.core.components.DsCheckbox(
+            checked  = item.done,
+            onChange = { onToggle() },
+            size     = 20.dp,
+        )
         Spacer(Modifier.width(12.dp))
         Text(
             item.text,
@@ -981,10 +1339,17 @@ private fun AttachmentTile(tint: Color, modifier: Modifier = Modifier) {
 private data class NoteItem(
     val author: String, val initials: String, val tint: Color,
     val timestamp: String, val message: String,
+    /** Firebase Storage URL of an attached voice note. Renders a playable
+     *  bubble when present; suppresses the [message] text block when blank. */
+    val voiceUrl: String? = null,
+    val voiceDurationMs: Long? = null,
 )
 
 @Composable
-private fun NoteRow(note: NoteItem) {
+private fun NoteRow(
+    note: NoteItem,
+    player: com.example.uniwattelektrik.core.platform.VoicePlayer? = null,
+) {
     Row {
         Box(
             modifier = Modifier
@@ -1004,10 +1369,77 @@ private fun NoteRow(note: NoteItem) {
                      fontSize = 11.sp, fontWeight = FontWeight.Medium)
             }
             Spacer(Modifier.height(2.dp))
-            Text(note.message, color = InkSecondary, fontSize = 13.sp,
-                 lineHeight = 19.sp)
+            if (note.message.isNotBlank()) {
+                Text(note.message, color = InkSecondary, fontSize = 13.sp,
+                     lineHeight = 19.sp)
+            }
+            if (!note.voiceUrl.isNullOrBlank() && player != null) {
+                if (note.message.isNotBlank()) Spacer(Modifier.height(6.dp))
+                VoiceBubble(
+                    url        = note.voiceUrl,
+                    durationMs = note.voiceDurationMs ?: 0L,
+                    tint       = note.tint,
+                    player     = player,
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun VoiceBubble(
+    url       : String,
+    durationMs: Long,
+    tint      : Color,
+    player    : com.example.uniwattelektrik.core.platform.VoicePlayer,
+) {
+    val isCurrent = player.currentUrl == url
+    val isPlaying = isCurrent && player.isPlaying
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(tint.copy(alpha = 0.10f))
+            .border(1.dp, tint.copy(alpha = 0.25f), RoundedCornerShape(14.dp))
+            .clickable {
+                if (isPlaying) player.pause() else player.play(url)
+            }
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier.size(28.dp).clip(CircleShape).background(tint),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                if (isPlaying) "❚❚" else "▶",
+                color = Color.White,
+                fontSize = if (isPlaying) 10.sp else 12.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        Text(
+            "Voice note",
+            color = InkPrimary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.width(2.dp))
+        Text(
+            formatVoiceDuration(durationMs),
+            color = InkSecondary,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+private fun formatVoiceDuration(ms: Long): String {
+    if (ms <= 0L) return "0:00"
+    val totalSec = (ms / 1000L).toInt()
+    val m = totalSec / 60
+    val s = totalSec % 60
+    return "$m:${s.toString().padStart(2, '0')}"
 }
 
 @Composable
@@ -1015,6 +1447,11 @@ private fun ComposerRow(
     value: String,
     onChange: (String) -> Unit,
     onSend: () -> Unit,
+    isRecording: Boolean = false,
+    recordingMs: Long = 0L,
+    onStartRecording: () -> Unit = {},
+    onStopRecording: () -> Unit = {},
+    onCancelRecording: () -> Unit = {},
 ) {
     Row(
         modifier = Modifier
@@ -1024,27 +1461,82 @@ private fun ComposerRow(
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(modifier = Modifier.weight(1f)) {
-            if (value.isEmpty()) {
-                Text("Add a note…", color = InkMuted, fontSize = 13.sp)
-            }
-            BasicTextField(
-                value = value,
-                onValueChange = onChange,
-                textStyle = TextStyle(color = InkPrimary, fontSize = 13.sp),
-                cursorBrush = SolidColor(Brand),
-                modifier = Modifier.fillMaxWidth(),
+        if (isRecording) {
+            // ── Recording state — replaces the text input with a live timer
+            //    + cancel + send-voice controls. Keeps the composer at one
+            //    consistent vertical rhythm whether typing or recording.
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(Danger),
             )
-        }
-        Spacer(Modifier.width(8.dp))
-        Box(
-            modifier = Modifier
-                .size(34.dp).clip(CircleShape)
-                .background(if (value.isBlank()) InkMuted.copy(alpha = 0.4f) else Brand)
-                .clickable(enabled = value.isNotBlank(), onClick = onSend),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.Filled.Add, null, tint = Color.White, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Recording  ·  ${formatVoiceDuration(recordingMs)}",
+                color = Danger,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            Box(
+                modifier = Modifier
+                    .size(34.dp).clip(CircleShape)
+                    .background(InkMuted.copy(alpha = 0.25f))
+                    .clickable(onClick = onCancelRecording),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("✕", color = InkSecondary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(34.dp).clip(CircleShape)
+                    .background(Brand)
+                    .clickable(onClick = onStopRecording),
+                contentAlignment = Alignment.Center,
+            ) {
+                // Send (▶ rotated as paper-plane proxy)
+                Icon(Icons.Filled.Add, null, tint = Color.White, modifier = Modifier.size(18.dp))
+            }
+        } else {
+            Box(modifier = Modifier.weight(1f)) {
+                if (value.isEmpty()) {
+                    Text("Add a note…", color = InkMuted, fontSize = 13.sp)
+                }
+                BasicTextField(
+                    value = value,
+                    onValueChange = onChange,
+                    textStyle = TextStyle(color = InkPrimary, fontSize = 13.sp),
+                    cursorBrush = SolidColor(Brand),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            // Mic button only shows while there's nothing typed — once the
+            // user starts typing the mic gives way to the send button. Mirrors
+            // common chat patterns (WhatsApp / Telegram).
+            if (value.isBlank()) {
+                Box(
+                    modifier = Modifier
+                        .size(34.dp).clip(CircleShape)
+                        .background(Brand.copy(alpha = 0.85f))
+                        .clickable(onClick = onStartRecording),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("🎤", fontSize = 16.sp)
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(34.dp).clip(CircleShape)
+                        .background(Brand)
+                        .clickable(onClick = onSend),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Filled.Add, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                }
+            }
         }
     }
 }
@@ -1107,7 +1599,34 @@ private fun UserTaskActionBar(
     locationProvider: LocationProvider,
     scope: kotlinx.coroutines.CoroutineScope,
     onStartWork: (String) -> Unit,
+    siteLat: Double? = null,
+    siteLng: Double? = null,
+    siteLabel: String = "",
 ) {
+    val mapLauncher = remember { com.example.uniwattelektrik.platform.LinkLauncher() }
+    // Per-action busy flag. Set the moment a transition button is tapped and
+    // cleared automatically as soon as the live Firestore status flips to a
+    // different value — so the spinner naturally disappears the instant the
+    // new action bar (e.g. "Mark Completed") replaces this row. Keyed on
+    // taskId so navigating between tasks resets cleanly.
+    var pendingAction by remember(taskId) { mutableStateOf<String?>(null) }
+    // Reassign sheet visibility — separate from pendingAction because the
+    // sheet can be opened/cancelled without ever firing a write.
+    var showReassignSheet by remember(taskId) { mutableStateOf(false) }
+    val employees by (workforceVm?.employees
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList()) })
+        .collectAsStateWithLifecycle()
+    // Whenever the live status changes (snapshot listener fired), clear the
+    // busy state — the UI is now reflecting the server truth.
+    LaunchedEffect(status, taskId) { pendingAction = null }
+    // Safety net: if Firestore takes longer than 8 s (poor network), drop the
+    // spinner so the user can retry instead of being stuck.
+    LaunchedEffect(pendingAction, taskId) {
+        if (pendingAction != null) {
+            kotlinx.coroutines.delay(8000)
+            pendingAction = null
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1122,7 +1641,9 @@ private fun UserTaskActionBar(
                     icon      = Icons.Filled.PlayArrow,
                     gradient  = listOf(Color(0xFF3B82F6), Color(0xFF1D4ED8)),
                     modifier  = Modifier.fillMaxWidth(),
+                    loading   = pendingAction == "accept",
                     onClick   = {
+                        pendingAction = "accept"
                         scope.launch {
                             val loc = runCatching { locationProvider.getCurrentLocation() }.getOrNull()
                             workforceVm?.acceptTask(
@@ -1139,7 +1660,9 @@ private fun UserTaskActionBar(
                     icon      = Icons.Filled.Upload,
                     gradient  = listOf(Color(0xFFF59E0B), Color(0xFFD97706)),
                     modifier  = Modifier.fillMaxWidth(),
+                    loading   = pendingAction == "escalate",
                     onClick   = {
+                        pendingAction = "escalate"
                         workforceVm?.changeTaskStatus(
                             taskId    = taskId,
                             adminUid  = adminUid,
@@ -1151,7 +1674,25 @@ private fun UserTaskActionBar(
             }
 
             "InProgress" -> {
-                // Primary: Completed → Done (sign-off flow)
+                // Quick "Navigate to Site" — only shown when we actually have
+                // coordinates on this task. Tapping deep-links into the user's
+                // preferred maps app (Google Maps on Android, Apple Maps on
+                // iOS) pinned at the site so the engineer can drive straight
+                // there from the task screen.
+                if (siteLat != null && siteLng != null) {
+                    PremiumActionButton(
+                        label    = "Navigate to Site",
+                        icon     = Icons.Filled.LocationOn,
+                        gradient = listOf(Color(0xFF06B6D4), Color(0xFF0E7490)),
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick  = {
+                            mapLauncher.openMap(siteLat, siteLng, label = siteLabel)
+                        },
+                    )
+                }
+                // Primary: Completed → Done (sign-off flow). No spinner here —
+                // this opens the sign-off sheet rather than writing to Firestore
+                // directly, so feedback is immediate.
                 PremiumActionButton(
                     label    = "Mark Completed",
                     icon     = Icons.Filled.Check,
@@ -1165,7 +1706,9 @@ private fun UserTaskActionBar(
                     icon     = Icons.Filled.Upload,
                     gradient = listOf(Color(0xFFF59E0B), Color(0xFFD97706)),
                     modifier = Modifier.fillMaxWidth(),
+                    loading  = pendingAction == "escalate",
                     onClick  = {
+                        pendingAction = "escalate"
                         workforceVm?.changeTaskStatus(
                             taskId    = taskId,
                             adminUid  = adminUid,
@@ -1185,6 +1728,15 @@ private fun UserTaskActionBar(
                     modifier = Modifier.fillMaxWidth(),
                     onClick  = { onStartWork(taskId) },
                 )
+                // Secondary: Reassign to another user — opens a picker sheet.
+                PremiumActionButton(
+                    label    = "Reassign",
+                    icon     = Icons.Filled.Person,
+                    gradient = listOf(Color(0xFF6366F1), Color(0xFF4338CA)),
+                    modifier = Modifier.fillMaxWidth(),
+                    loading  = pendingAction == "reassign",
+                    onClick  = { showReassignSheet = true },
+                )
             }
 
             "Done" -> {
@@ -1194,7 +1746,9 @@ private fun UserTaskActionBar(
                     icon     = Icons.Filled.Refresh,
                     gradient = listOf(Color(0xFF64748B), Color(0xFF334155)),
                     modifier = Modifier.fillMaxWidth(),
+                    loading  = pendingAction == "reopen",
                     onClick  = {
+                        pendingAction = "reopen"
                         workforceVm?.changeTaskStatus(
                             taskId    = taskId,
                             adminUid  = adminUid,
@@ -1206,6 +1760,107 @@ private fun UserTaskActionBar(
             }
         }
         Spacer(Modifier.height(4.dp))
+    }
+
+    // ── Reassign bottom sheet ────────────────────────────────────────────
+    if (showReassignSheet) {
+        ReassignSheet(
+            employees       = employees.filter { it.deletedAt == null && it.status != "Inactive" && it.id != userId },
+            onDismiss       = { showReassignSheet = false },
+            onPick          = { emp ->
+                showReassignSheet = false
+                pendingAction = "reassign"
+                workforceVm?.reassignTask(
+                    taskId           = taskId,
+                    adminUid         = adminUid,
+                    newAssigneeIds   = listOf(emp.id),
+                    newAssigneeNames = listOf(emp.name),
+                )
+            },
+        )
+    }
+}
+
+/**
+ * Bottom-sheet user picker used when the assigned engineer wants to hand
+ * off an InReview task to a teammate. Single-select; tap to confirm.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun ReassignSheet(
+    employees: List<com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeRecord>,
+    onDismiss: () -> Unit,
+    onPick: (com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeRecord) -> Unit,
+) {
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor   = Color.White,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+        ) {
+            Text(
+                "Reassign task",
+                color      = InkPrimary,
+                fontSize   = 18.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                "Pick a teammate to take over this task.",
+                color    = InkSecondary,
+                fontSize = 13.sp,
+            )
+            Spacer(Modifier.height(12.dp))
+            if (employees.isEmpty()) {
+                Text(
+                    "No other active teammates available.",
+                    color    = InkSecondary,
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(vertical = 16.dp),
+                )
+            } else {
+                employees.forEach { emp ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onPick(emp) }
+                            .padding(vertical = 10.dp, horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Brand.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Filled.Person,
+                                contentDescription = null,
+                                tint = Brand,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(emp.name, color = InkPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                            if (emp.role.isNotBlank()) {
+                                Text(emp.role, color = InkSecondary, fontSize = 12.sp)
+                            }
+                        }
+                        Text(
+                            "${emp.tasksOpen} open",
+                            color    = InkSecondary,
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
     }
 }
 
@@ -1219,6 +1874,7 @@ private fun PremiumActionButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     gradient: List<Color>,
     modifier: Modifier = Modifier,
+    loading: Boolean = false,
     onClick: () -> Unit = {},
 ) {
     Row(
@@ -1227,7 +1883,7 @@ private fun PremiumActionButton(
             .shadow(12.dp, RoundedCornerShape(16.dp), spotColor = gradient.last().copy(alpha = 0.40f))
             .clip(RoundedCornerShape(16.dp))
             .background(Brush.horizontalGradient(gradient))
-            .clickable(onClick = onClick)
+            .clickable(enabled = !loading, onClick = onClick)
             .padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
@@ -1239,16 +1895,24 @@ private fun PremiumActionButton(
                 .background(Color.White.copy(alpha = 0.20f)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(16.dp),
-            )
+            if (loading) {
+                CircularProgressIndicator(
+                    color       = Color.White,
+                    strokeWidth = 2.dp,
+                    modifier    = Modifier.size(16.dp),
+                )
+            } else {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
         }
         Spacer(Modifier.width(10.dp))
         Text(
-            label,
+            if (loading) "Please wait…" else label,
             color = Color.White,
             fontSize = 15.sp,
             fontWeight = FontWeight.Bold,
@@ -1289,6 +1953,8 @@ private fun sampleFromRecord(t: TaskRecord): com.example.uniwattelektrik.core.sa
         priority = priority,
         status = status,
         assigneeInitials = t.assigneeInitials.ifBlank { "??" },
+        latitude  = t.latitude,
+        longitude = t.longitude,
     )
 }
 
@@ -1309,6 +1975,24 @@ private fun humanStatusLabel(raw: String): String = when (raw.lowercase().replac
     "todo", "queued"        -> "To Do"
     "completed", "done"     -> "Done"
     else                    -> raw
+}
+
+/**
+ * Formats a coordinate to 5 decimal places (≈1 m precision) without
+ * relying on `String.format` (JVM-only). Manual rounding keeps the
+ * implementation multiplatform.
+ */
+private fun formatLatLng5(v: Double): String {
+    val rounded = kotlin.math.round(v * 100_000.0) / 100_000.0
+    val s = rounded.toString()
+    val dot = s.indexOf('.')
+    return if (dot < 0) "$s.00000" else {
+        val frac = s.substring(dot + 1)
+        when {
+            frac.length >= 5 -> s.substring(0, dot + 6)
+            else             -> s + "0".repeat(5 - frac.length)
+        }
+    }
 }
 
 /* ─── Activity timeline builder ────────────────────────────────────────── */

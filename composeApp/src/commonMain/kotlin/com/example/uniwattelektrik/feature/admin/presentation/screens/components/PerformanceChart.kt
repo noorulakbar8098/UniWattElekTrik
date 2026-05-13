@@ -239,18 +239,41 @@ fun PerformanceChartSection(
         else total.toDouble() / chartData.buckets.size
     }
 
+    val cardShape = RoundedCornerShape(28.dp)
     Box(
         modifier = modifier
             .fillMaxWidth()
+            // Ambient cyan-tinted spot shadow gives the card a subtle "lift",
+            // matching the premium analytics-widget feel in the brief.
             .shadow(
-                elevation    = 6.dp,
-                shape        = RoundedCornerShape(AppTheme.RadiusXl),
-                ambientColor = AppTheme.ShadowMd,
-                spotColor    = AppTheme.ShadowMd,
+                elevation    = 12.dp,
+                shape        = cardShape,
+                ambientColor = AppTheme.Brand.copy(alpha = 0.08f),
+                spotColor    = AppTheme.Brand.copy(alpha = 0.14f),
             )
-            .clip(RoundedCornerShape(AppTheme.RadiusXl))
-            .background(AppTheme.Surface)
-            .border(1.dp, AppTheme.Ink100, RoundedCornerShape(AppTheme.RadiusXl))
+            .clip(cardShape)
+            // Very soft blue-gray mesh gradient — replaces flat white so the
+            // surface picks up light differently across its body.
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        Color(0xFFFCFDFF),
+                        Color(0xFFF5F8FE),
+                        Color(0xFFFAFBFF),
+                    ),
+                ),
+            )
+            .border(
+                width = 1.dp,
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        AppTheme.Brand.copy(alpha = 0.18f),
+                        AppTheme.Ink100,
+                        AppTheme.Brand.copy(alpha = 0.10f),
+                    ),
+                ),
+                shape = cardShape,
+            )
             .padding(20.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -305,11 +328,12 @@ fun PerformanceChartSection(
             // ── Summary stats strip ─────────────────────────────────────
             if (chartData.employees.isNotEmpty()) {
                 SummaryStatsRow(
-                    total      = total,
-                    avg        = avgPerStep,
-                    peakLabel  = peakBucket?.label.orEmpty(),
-                    peakValue  = peakBucket?.total ?: 0,
+                    total       = total,
+                    avg         = avgPerStep,
+                    peakLabel   = peakBucket?.label.orEmpty(),
+                    peakValue   = peakBucket?.total ?: 0,
                     periodLabel = period.label,
+                    sparkline   = chartData.buckets.map { it.total },
                 )
             }
 
@@ -494,9 +518,18 @@ private fun BarChartBody(
     val maxVal     = data.buckets.flatMap { it.counts.values }.maxOrNull()?.coerceAtLeast(1) ?: 1
     val niceMax    = niceCeil(maxVal)
     val numEmps    = data.employees.size.coerceAtLeast(1)
-    val barWidth   = if (numEmps <= 2) 22.dp else if (numEmps <= 4) 16.dp else 12.dp
-    val barGap     = 4.dp
-    val groupMinWidth = (barWidth.value * numEmps + barGap.value * (numEmps - 1) + 28).dp
+    val numBuckets = data.buckets.size.coerceAtLeast(1)
+
+    // Minimum sizes — used as the floor when there isn't enough width and the
+    // chart needs to scroll horizontally. Bars are intentionally chunky so the
+    // graph reads as a premium dashboard, not a sparkline.
+    val minBarWidth   = if (numEmps <= 2) 34.dp else if (numEmps <= 4) 24.dp else 18.dp
+    val maxBarWidth   = if (numEmps <= 2) 56.dp else if (numEmps <= 4) 42.dp else 32.dp
+    val barGap        = 6.dp
+    val groupHPadding = 8.dp   // 4dp on each side inside a group column
+    val minGroupWidth = (minBarWidth.value * numEmps +
+                         barGap.value * (numEmps - 1) +
+                         groupHPadding.value * 2 + 12).dp
 
     Row(
         modifier = Modifier.fillMaxWidth().height(chartHeight),
@@ -511,8 +544,31 @@ private fun BarChartBody(
                 .padding(bottom = 24.dp, top = 6.dp),
         )
 
-        // Plot area
-        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+        // Plot area — use BoxWithConstraints so we know how much horizontal
+        // room is available and can either (a) stretch each group to fill
+        // the chart when there's room, or (b) fall back to the per-group
+        // minimum and let horizontal scrolling kick in.
+        BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxHeight()) {
+            val available    = maxWidth                                  // plot width
+            val groupGapTotal = barGap * (numBuckets - 1).coerceAtLeast(0)
+            val fitGroup     = ((available - groupGapTotal) / numBuckets)
+                .coerceAtLeast(minGroupWidth)
+            val groupWidth   = fitGroup
+            // Stretch bars proportionally when there's spare room; bars can
+            // grow up to 36 dp wide which keeps them legible on tablets.
+            val innerSpace   = (groupWidth - groupHPadding * 2 -
+                                barGap * (numEmps - 1).coerceAtLeast(0))
+                .coerceAtLeast(minBarWidth * numEmps)
+            // When there's only ONE employee (i.e. only one bar per day-group),
+            // let the bar grow to fill the whole day slot — no upper cap. With
+            // multiple employees we keep the cap so the bars don't go absurdly
+            // wide on tablets.
+            val rawBarWidth  = innerSpace / numEmps
+            val barWidth     = if (numEmps == 1)
+                rawBarWidth.coerceAtLeast(minBarWidth)
+            else
+                rawBarWidth.coerceIn(minBarWidth, maxBarWidth)
+
             // Gridlines behind everything
             GridLines(
                 divisions = 4,
@@ -528,13 +584,13 @@ private fun BarChartBody(
                     .horizontalScroll(scrollState)
                     .fillMaxHeight(),
                 verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(barGap),
             ) {
                 data.buckets.forEachIndexed { bi, bucket ->
                     val isSelected = selectedBucket == bi
                     Column(
                         modifier = Modifier
-                            .width(groupMinWidth)
+                            .width(groupWidth)
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(10.dp))
                             .background(if (isSelected) AppTheme.Brand50 else Color.Transparent)
@@ -892,33 +948,59 @@ private fun BucketTooltip(
 @Composable
 private fun EmployeeLegend(employees: List<Triple<String, String, Color>>) {
     if (employees.isEmpty()) return
+    // Compact chips — show top 4 by default, expand to all on tap. Keeps the
+    // analytics card from sprawling vertically when the team is large.
+    val collapsedCap = 4
+    var expanded by remember(employees) { mutableStateOf(false) }
+    val needsExpand = employees.size > collapsedCap
+    val visible = if (expanded || !needsExpand) employees else employees.take(collapsedCap)
+
     androidx.compose.foundation.layout.FlowRow(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement   = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement   = Arrangement.spacedBy(6.dp),
     ) {
-        employees.forEach { (_, name, color) ->
+        visible.forEach { (_, name, color) ->
             Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(color.copy(alpha = 0.10f))
-                    .border(1.dp, color.copy(alpha = 0.25f), RoundedCornerShape(20.dp))
-                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(color.copy(alpha = 0.08f))
+                    .border(1.dp, color.copy(alpha = 0.22f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Box(
                     modifier = Modifier
-                        .size(8.dp)
+                        .size(7.dp)
                         .clip(CircleShape)
                         .background(color),
                 )
                 Text(
                     text       = name.split(" ").first(),
                     color      = AppTheme.Ink700,
-                    fontSize   = 11.sp,
+                    fontSize   = 10.5.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines   = 1,
+                )
+            }
+        }
+        if (needsExpand) {
+            val remaining = employees.size - collapsedCap
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(AppTheme.SurfaceMuted)
+                    .border(1.dp, AppTheme.Ink100, RoundedCornerShape(10.dp))
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 9.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text       = if (expanded) "Show less" else "+$remaining more",
+                    color      = AppTheme.Brand,
+                    fontSize   = 10.5.sp,
+                    fontWeight = FontWeight.Bold,
                 )
             }
         }
@@ -935,9 +1017,25 @@ private fun SummaryStatsRow(
     peakLabel: String,
     peakValue: Int,
     periodLabel: String,
+    sparkline: List<Int>,
 ) {
     val avgText = if (avg >= 10) avg.roundToInt().toString()
                   else ((avg * 10).roundToInt() / 10.0).toString()
+    // Average trend caption — compare second-half vs first-half so the user
+    // sees momentum. Quiet, deliberate — no fake precision.
+    val trendCaption = remember(sparkline) {
+        if (sparkline.size < 2) ""
+        else {
+            val half = sparkline.size / 2
+            val first = sparkline.take(half).sum()
+            val second = sparkline.drop(half).sum()
+            when {
+                second > first  -> "↑ trending up"
+                second < first  -> "↓ trending down"
+                else            -> "stable"
+            }
+        }
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -946,17 +1044,19 @@ private fun SummaryStatsRow(
             modifier  = Modifier.weight(1f),
             label     = "Total",
             value     = total.toString(),
-            sublabel  = periodLabel.lowercase(),
+            sublabel  = "This ${periodLabel.lowercase()}",
             accent    = AppTheme.Brand,
             tintBg    = AppTheme.Brand50,
+            sparkline = sparkline,
         )
         StatTile(
             modifier  = Modifier.weight(1f),
             label     = "Average",
             value     = avgText,
-            sublabel  = "per ${stepLabel(periodLabel)}",
+            sublabel  = "${stepLabel(periodLabel)} avg",
             accent    = AppTheme.Success,
             tintBg    = AppTheme.SuccessBg,
+            trendCaption = trendCaption,
         )
         StatTile(
             modifier  = Modifier.weight(1f),
@@ -965,15 +1065,16 @@ private fun SummaryStatsRow(
             sublabel  = peakLabel.ifBlank { "—" },
             accent    = AppTheme.Warning,
             tintBg    = AppTheme.WarningBg,
+            topBadge  = "HIGHEST",
         )
     }
 }
 
 private fun stepLabel(period: String): String = when (period) {
-    "Week"  -> "day"
-    "Month" -> "week"
-    "Year"  -> "month"
-    else    -> "step"
+    "Week"  -> "Daily"
+    "Month" -> "Weekly"
+    "Year"  -> "Monthly"
+    else    -> "Step"
 }
 
 @Composable
@@ -984,35 +1085,146 @@ private fun StatTile(
     sublabel: String,
     accent: Color,
     tintBg: Color,
+    sparkline: List<Int>? = null,
+    trendCaption: String? = null,
+    topBadge: String? = null,
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(tintBg)
-            .border(1.dp, accent.copy(alpha = 0.20f), RoundedCornerShape(12.dp))
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+            .shadow(
+                elevation    = 1.dp,
+                shape        = RoundedCornerShape(20.dp),
+                ambientColor = accent.copy(alpha = 0.10f),
+                spotColor    = accent.copy(alpha = 0.10f),
+            )
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        tintBg.copy(alpha = 0.85f),
+                        Color.White.copy(alpha = 0.65f),
+                    ),
+                ),
+            )
+            .border(1.dp, accent.copy(alpha = 0.18f), RoundedCornerShape(20.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        Text(
-            text       = label.uppercase(),
-            color      = accent,
-            fontSize   = 9.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.6.sp,
-        )
+        // Top row: uppercase label + optional badge.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text       = label.uppercase(),
+                color      = accent,
+                fontSize   = 9.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.0.sp,
+                modifier = Modifier.weight(1f),
+            )
+            if (topBadge != null) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(accent.copy(alpha = 0.18f))
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                ) {
+                    Text(
+                        text       = topBadge,
+                        color      = accent,
+                        fontSize   = 7.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.8.sp,
+                    )
+                }
+            }
+        }
+        // Big number — the dominant visual.
         Text(
             text       = value,
             color      = AppTheme.Ink900,
-            fontSize   = 18.sp,
+            fontSize   = 24.sp,
             fontWeight = FontWeight.ExtraBold,
-            letterSpacing = (-0.4).sp,
+            letterSpacing = (-0.6).sp,
         )
         Text(
             text     = sublabel,
             color    = AppTheme.Ink500,
             fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
             maxLines = 1,
         )
+        // Optional decoration row — sparkline OR trend caption (mutually
+        // exclusive at the call site so tiles stay the same height).
+        when {
+            sparkline != null && sparkline.size >= 2 -> {
+                Spacer(Modifier.height(2.dp))
+                StatSparkline(
+                    values = sparkline.map { it.toFloat() },
+                    tint   = accent,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(18.dp),
+                )
+            }
+            !trendCaption.isNullOrBlank() -> {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text     = trendCaption,
+                    color    = accent.copy(alpha = 0.9f),
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.2.sp,
+                )
+            }
+        }
+    }
+}
+
+/** Inline sparkline — strokes + soft gradient fill underneath. */
+@Composable
+private fun StatSparkline(
+    values  : List<Float>,
+    tint    : Color,
+    modifier: Modifier = Modifier,
+) {
+    if (values.size < 2) return
+    Canvas(modifier = modifier) {
+        val pad = 2f
+        val w   = size.width
+        val h   = size.height
+        val min = values.min()
+        val max = values.max()
+        val span = (max - min).takeIf { it > 0f } ?: 1f
+        val stepX = (w - pad * 2) / (values.size - 1)
+        val points = values.mapIndexed { i, v ->
+            val x = pad + stepX * i
+            val y = h - pad - ((v - min) / span) * (h - pad * 2)
+            Offset(x, y)
+        }
+        // Soft fill area beneath the line.
+        val fillPath = Path().apply {
+            moveTo(points.first().x, h)
+            points.forEach { lineTo(it.x, it.y) }
+            lineTo(points.last().x, h)
+            close()
+        }
+        drawPath(
+            path = fillPath,
+            brush = Brush.verticalGradient(
+                colors = listOf(tint.copy(alpha = 0.30f), tint.copy(alpha = 0.0f)),
+            ),
+        )
+        // Stroke line on top.
+        val strokePath = Path().apply {
+            moveTo(points.first().x, points.first().y)
+            for (i in 1 until points.size) lineTo(points[i].x, points[i].y)
+        }
+        drawPath(
+            path  = strokePath,
+            color = tint,
+            style = Stroke(width = 1.6f, cap = StrokeCap.Round),
+        )
+        // End-point dot.
+        drawCircle(color = tint, radius = 2.4f, center = points.last())
     }
 }
 

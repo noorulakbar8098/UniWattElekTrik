@@ -28,6 +28,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.ui.Alignment
@@ -38,11 +39,13 @@ import com.example.uniwattelektrik.core.components.BottomNavItem
 import com.example.uniwattelektrik.core.components.EmptyState
 import com.example.uniwattelektrik.core.components.ScreenSkeletonOverlay
 import com.example.uniwattelektrik.core.components.SkeletonType
+import com.example.uniwattelektrik.core.components.ToastHost
 import com.example.uniwattelektrik.core.navigation.AdminNavigator
 import com.example.uniwattelektrik.core.navigation.AdminRoute
 import com.example.uniwattelektrik.core.navigation.rememberAdminNavigator
 import com.example.uniwattelektrik.di.AppContainer
 import com.example.uniwattelektrik.feature.admin.presentation.screens.AdminAttendanceScreen
+import com.example.uniwattelektrik.feature.admin.presentation.screens.AlertsScreen
 import com.example.uniwattelektrik.feature.admin.presentation.screens.LinkManagerScreen
 import com.example.uniwattelektrik.feature.admin.presentation.screens.AdminEmployeeDetailScreen
 import com.example.uniwattelektrik.feature.admin.presentation.screens.AdminEmployeesScreen
@@ -75,6 +78,10 @@ fun AdminShell(
     val workforceVm: WorkforceViewModel = remember { AppContainer.createWorkforceViewModel() }
     val inventoryVm: InventoryViewModel = remember { AppContainer.createInventoryViewModel() }
     val showAddEmployee = remember { mutableStateOf(false) }
+    // Transient — set when an admin home KPI ("Pending" / "Completed") is
+    // tapped, consumed by AdminTasksScreen on its first composition so the
+    // pager opens on the matching workflow tab.
+    var tasksInitialTab by remember { mutableStateOf<String?>(null) }
     // Holds per-route `rememberSaveable` state (scroll positions, search
     // queries, etc.) across stack push/pop so users return to the same
     // visual position they left.
@@ -91,10 +98,17 @@ fun AdminShell(
     // (e.g. "leave" — handled by UserShell instead).
     val deepLink by com.example.uniwattelektrik.core.notification.DeepLinkBus.route
         .collectAsStateWithLifecycle()
-    LaunchedEffect(deepLink) {
+    val deepLinkTaskId by com.example.uniwattelektrik.core.notification.DeepLinkBus.taskId
+        .collectAsStateWithLifecycle()
+    LaunchedEffect(deepLink, deepLinkTaskId) {
         when (deepLink) {
             "home"       -> nav.selectTab(AdminRoute.Dashboard)
-            "tasks"      -> nav.selectTab(AdminRoute.Tasks)
+            "tasks"      -> {
+                nav.selectTab(AdminRoute.Tasks)
+                // If the notification carried a specific task id (e.g. a note
+                // was added), pop the matching detail screen on top.
+                deepLinkTaskId?.let { nav.navigate(AdminRoute.TaskDetail(it)) }
+            }
             "employees"  -> nav.selectTab(AdminRoute.Employees)
             "attendance" -> nav.selectTab(AdminRoute.Attendance)
             "inventory"  -> nav.selectTab(AdminRoute.Inventory)
@@ -231,6 +245,15 @@ fun AdminShell(
                     onViewAllTasks      = { nav.selectTab(AdminRoute.Tasks) },
                     onViewAllEmployees  = { nav.selectTab(AdminRoute.Employees) },
                     onViewInventory     = { nav.selectTab(AdminRoute.Inventory) },
+                    onPendingTasksClick = {
+                        tasksInitialTab = "Todo"
+                        nav.selectTab(AdminRoute.Tasks)
+                    },
+                    onCompletedTasksClick = {
+                        tasksInitialTab = "Done"
+                        nav.selectTab(AdminRoute.Tasks)
+                    },
+                    onAlertsClick = { nav.navigate(AdminRoute.Alerts) },
                 )
                 AdminRoute.Employees -> AdminEmployeesScreen(
                     adminUid        = user.id,
@@ -245,6 +268,8 @@ fun AdminShell(
                     onBack       = { nav.selectTab(AdminRoute.Dashboard) },
                     onTaskClick  = { id -> nav.navigate(AdminRoute.TaskDetail(id)) },
                     onEditTask   = { id -> nav.navigate(AdminRoute.NewTask(editTaskId = id)) },
+                    initialTabKey         = tasksInitialTab,
+                    onInitialTabConsumed  = { tasksInitialTab = null },
                 )
                 is AdminRoute.TaskDetail -> TaskDetailScreen(
                     taskId      = r.taskId,
@@ -268,8 +293,10 @@ fun AdminShell(
                     editTaskId       = r.editTaskId,
                 )
                 AdminRoute.Attendance -> AdminAttendanceScreen(
-                    workforceVm = workforceVm,
-                    onBack      = { nav.selectTab(AdminRoute.Dashboard) },
+                    workforceVm     = workforceVm,
+                    onBack          = { nav.selectTab(AdminRoute.Dashboard) },
+                    onEmployeeClick = { id -> nav.navigate(AdminRoute.EmployeeAttendanceDetail(id)) },
+                    adminUid        = user.id,
                 )
                 AdminRoute.Inventory -> AdminInventoryScreen(
                     inventoryVm   = inventoryVm,
@@ -317,25 +344,31 @@ fun AdminShell(
                     onEdit       = { item -> nav.navigate(AdminRoute.SpareItemForm(item)) },
                     onItemClick  = { item -> nav.navigate(AdminRoute.SpareItemDetail(item)) },
                 )
-                is AdminRoute.SpareItemDetail -> com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItemDetailScreen(
-                    item    = r.item,
-                    onBack  = { nav.pop() },
-                    onEdit  = {
-                        nav.pop()
-                        nav.navigate(AdminRoute.SpareItemForm(r.item))
-                    },
-                    onDelete = {
-                        inventoryVm.deleteSpareItem(user.id, r.item.id)
-                        nav.pop()
-                    },
-                )
+                is AdminRoute.SpareItemDetail -> {
+                    // Pull the latest version of the spare from the live VM
+                    // state so edits made via the form are reflected when the
+                    // user returns to the Detail screen.
+                    val liveSpares by inventoryVm.spareItems.collectAsStateWithLifecycle()
+                    val freshItem = liveSpares.firstOrNull { it.id == r.item.id } ?: r.item
+                    com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItemDetailScreen(
+                        item    = freshItem,
+                        onBack  = { nav.pop() },
+                        onEdit  = {
+                            // Push Form on top of Detail so Save/Back returns
+                            // to the Detail (Spare view) screen — not the list.
+                            nav.navigate(AdminRoute.SpareItemForm(freshItem))
+                        },
+                        onDelete = {
+                            inventoryVm.deleteSpareItem(user.id, freshItem.id) { nav.pop() }
+                        },
+                    )
+                }
                 is AdminRoute.SpareItemForm -> com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItemFormScreen(
                     initial     = r.item,
                     onBack      = { nav.pop() },
                     inventoryVm = inventoryVm,
                     onSave      = { item ->
-                        inventoryVm.saveSpareItem(user.id, item)
-                        nav.pop()
+                        inventoryVm.saveSpareItem(user.id, item) { nav.pop() }
                     }
                 )
                 AdminRoute.Profile   -> ProfileScreen(
@@ -354,6 +387,12 @@ fun AdminShell(
                     adminUid    = user.id,
                     onEdit      = { id -> nav.navigate(AdminRoute.EditEmployee(id)) },
                 )
+                is AdminRoute.EmployeeAttendanceDetail ->
+                    com.example.uniwattelektrik.feature.admin.presentation.screens.EmployeeAttendanceDetailScreen(
+                        userId      = r.userId,
+                        workforceVm = workforceVm,
+                        onBack      = { nav.pop() },
+                    )
                 is AdminRoute.EditEmployee -> {
                     val employees by workforceVm.employees.collectAsStateWithLifecycle()
                     val initial = employees.firstOrNull { it.id == r.employeeId }
@@ -384,6 +423,25 @@ fun AdminShell(
                         )
                     }
                 }
+                AdminRoute.Alerts -> AlertsScreen(
+                    workforceVm      = workforceVm,
+                    inventoryVm      = inventoryVm,
+                    onBack           = { nav.pop() },
+                    onTaskClick      = { id -> nav.navigate(AdminRoute.TaskDetail(id)) },
+                    onLeaveClick     = { nav.navigate(AdminRoute.LeaveApprovals("Pending")) },
+                    onAttendanceClick = { nav.selectTab(AdminRoute.Attendance) },
+                    onSpareClick     = { item -> nav.navigate(AdminRoute.SpareItemDetail(item)) },
+                )
+                AdminRoute.Reports ->
+                    com.example.uniwattelektrik.feature.admin.presentation.reports.ReportsScreen(
+                        workforceVm     = workforceVm,
+                        inventoryVm     = inventoryVm,
+                        adminId         = user.id,
+                        onBack          = { nav.pop() },
+                        onEmployeeOpen  = { id -> nav.navigate(AdminRoute.EmployeeAttendanceDetail(id)) },
+                        onTaskBoardOpen = { nav.selectTab(AdminRoute.Tasks) },
+                        onSpareListOpen = { nav.navigate(AdminRoute.SpareList) },
+                    )
                 is AdminRoute.LeaveApprovals -> AdminLeaveApprovalsScreen(
                     workforceVm         = workforceVm,
                     adminUid            = user.id,
@@ -446,6 +504,9 @@ fun AdminShell(
             hostState = snackbarHost,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
+
+        // ── Global toast host (top of screen) ──────────────────────────────
+        ToastHost(modifier = Modifier.align(Alignment.TopCenter))
     }
 }
 
@@ -472,6 +533,8 @@ private fun routeKey(r: AdminRoute): String = when (r) {
     AdminRoute.Profile                 -> "profile"
     AdminRoute.Notifications           -> "notifications"
     AdminRoute.Financials              -> "financials"
+    AdminRoute.Alerts                  -> "alerts"
+    AdminRoute.Reports                 -> "reports"
     AdminRoute.InventoryManagement     -> "inv_mgmt"
     AdminRoute.Departments             -> "departments"
     AdminRoute.Equipment               -> "equipment"
@@ -479,6 +542,7 @@ private fun routeKey(r: AdminRoute): String = when (r) {
     AdminRoute.ImportSpareItemsPreview -> "import_preview"
     AdminRoute.LinkManager             -> "link_manager"
     is AdminRoute.EmployeeDetail       -> "employee_detail:${r.employeeId}"
+    is AdminRoute.EmployeeAttendanceDetail -> "emp_attendance:${r.userId}"
     is AdminRoute.EditEmployee         -> "edit_employee:${r.employeeId}"
     is AdminRoute.TaskDetail           -> "task_detail:${r.taskId}"
     is AdminRoute.NewTask              -> "new_task:${r.editTaskId.orEmpty()}"

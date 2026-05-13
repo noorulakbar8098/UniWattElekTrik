@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -910,19 +911,24 @@ fun FeedFilterChips(
                 if (count > 0) {
                     Spacer(Modifier.width(6.dp))
                     val display = if (count > 99) "99+" else count.toString()
-                    // Round badge: equal min size + horizontal padding only widens
-                    // when display string exceeds a single character so single
-                    // digits render as a perfect circle.
-                    val extraH = if (display.length > 1) (display.length - 1) * 3 else 0
+                    // Always-circular badge: pick a size based on digit count
+                    // and lock the aspect ratio to 1:1 so the shape never goes
+                    // oval. Single digits → 18 dp, double digits → 22 dp,
+                    // "99+" → 26 dp.
+                    val badgeSize = when (display.length) {
+                        1    -> 18.dp
+                        2    -> 22.dp
+                        else -> 26.dp
+                    }
                     Box(
                         modifier = Modifier
-                            .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
+                            .size(badgeSize)
+                            .aspectRatio(1f)
                             .clip(CircleShape)
                             .background(
                                 if (isSelected) Color.White.copy(alpha = 0.20f)
                                 else Color(0xFFEEF2F7),
-                            )
-                            .padding(horizontal = extraH.dp),
+                            ),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(

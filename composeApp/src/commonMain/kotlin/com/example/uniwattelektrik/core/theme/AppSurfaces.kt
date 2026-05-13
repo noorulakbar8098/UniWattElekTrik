@@ -41,11 +41,21 @@ val CardBorder  = AppTheme.Ink100         // subtle grey divider line
 val CardInnerHi = Color.Transparent       // no inner highlight
 
 /**
- * Flat neutral screen background brush.
- * Kept as a function for backward compat.
+ * Premium screen background — a barely-perceptible 3-stop mesh that gives
+ * the canvas atmospheric depth without competing with content. The top of
+ * the screen picks up a faint blue cast (subliminal ambient light), the
+ * middle warms slightly toward the neutral Bg, and the bottom sits a touch
+ * cooler so cards look "lifted" against it.
+ *
+ * Magnitude is intentionally tiny — under 2 % luminance variance across the
+ * full screen — so accent surfaces (cards, headers) keep visual priority.
  */
 fun appScreenBackground(): Brush = Brush.verticalGradient(
-    colors = listOf(AppTheme.Bg, AppTheme.Bg),
+    colors = listOf(
+        Color(0xFFF7F9FD),   // faint blue ambient at the top
+        AppTheme.Bg,          // base neutral
+        Color(0xFFF1F4FA),   // gentle cool-down at the bottom
+    ),
 )
 
 /**

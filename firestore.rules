@@ -28,6 +28,13 @@ service cloud.firestore {
     function ownsExisting()    { return isAuthed() && resource.data.adminId == request.auth.uid; }
     // Incoming-doc tenant ownership: caller is creating their own doc.
     function ownsIncoming()    { return isAuthed() && request.resource.data.adminId == request.auth.uid; }
+    // The caller is an active employee of the given admin (via /users/{uid}.adminId).
+    // Used for narrow employee write rules — e.g. decrementing spare-item stock
+    // on task signoff. Costs one document read per request.
+    function isEmployeeOf(adminId) {
+      return isAuthed()
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.adminId == adminId;
+    }
 
     // ── Cloudinary URL validators ────────────────────────────────────────────
     // Ensures photoUrl is always a real Cloudinary URL (not a malicious link).
@@ -89,7 +96,12 @@ service cloud.firestore {
             delete, list:   if ownsExisting();
       // Assigned employee can read & update their own tasks
       // (e.g. accept, checklist, add attachments, complete with signoff).
-      allow read, update:   if isAuthed() && resource.data.assignedUserId == request.auth.uid;
+      // Multi-assignee aware: accept either the legacy single field or the
+      // canonical assignedUserIds array (defaulting to [] for legacy docs).
+      allow read, update:   if isAuthed() && (
+                              resource.data.assignedUserId == request.auth.uid ||
+                              request.auth.uid in resource.data.get('assignedUserIds', [])
+                            );
 
       // ── Notes subcollection (chat between admin & assigned user) ─────────
       // Both the owning admin AND the currently-assigned user may read,
@@ -104,7 +116,10 @@ service cloud.firestore {
           return isAuthed() && parentTask().adminId == request.auth.uid;
         }
         function isTaskAssignee() {
-          return isAuthed() && parentTask().assignedUserId == request.auth.uid;
+          return isAuthed() && (
+            parentTask().assignedUserId == request.auth.uid ||
+            request.auth.uid in parentTask().get('assignedUserIds', [])
+          );
         }
         allow read, list, create, update, delete:
             if isTaskAdmin() || isTaskAssignee();
@@ -135,7 +150,12 @@ service cloud.firestore {
             delete, list:   if ownsExisting();
     }
     match /inventory_transactions/{txnId} {
-      allow create:         if ownsIncoming();
+      // Admin creates manual stock corrections; employees create one txn per
+      // material consumed at task signoff (with their own uid as userId).
+      allow create:         if ownsIncoming()
+                              || (isAuthed()
+                                  && request.resource.data.userId == request.auth.uid
+                                  && isEmployeeOf(request.resource.data.adminId));
       allow read, update,
             delete, list:   if ownsExisting();
       allow read:           if isAuthed() && resource.data.userId == request.auth.uid;
@@ -162,6 +182,13 @@ service cloud.firestore {
       allow create:         if ownsIncoming();
       allow read, update,
             delete, list:   if ownsExisting();
+      // Employees can decrement stockQty when signing off a task — limited
+      // to the stockQty field only so they can't rename items, change prices,
+      // etc. The directory's completeTaskWithSignoff path issues exactly this
+      // shape via FieldValue.increment.
+      allow update:         if isEmployeeOf(resource.data.adminId)
+                              && request.resource.data.diff(resource.data)
+                                   .affectedKeys().hasOnly(["stockQty"]);
     }
 
     // ── Leave requests ────────────────────────────────────────────────────

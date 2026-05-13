@@ -77,6 +77,15 @@ class WorkforceViewModel(
 
     private var spareItemsJob: Job? = null
 
+    // Phase 2 / Case 2 — inventory transaction stream. Powers the reports'
+    // "consumption from tasks vs manual" split and any future stock-movement
+    // analytics. Admin-scope only; users don't subscribe.
+    private val _inventoryTxns = MutableStateFlow<List<com.example.uniwattelektrik.feature.workforce.data.remote.InventoryTransaction>>(emptyList())
+    val inventoryTxns: StateFlow<List<com.example.uniwattelektrik.feature.workforce.data.remote.InventoryTransaction>> =
+        _inventoryTxns.asStateFlow()
+
+    private var inventoryTxnsJob: Job? = null
+
     private val _leaveRequests = MutableStateFlow<List<LeaveRecord>>(emptyList())
     val leaveRequests: StateFlow<List<LeaveRecord>> = _leaveRequests.asStateFlow()
 
@@ -89,6 +98,54 @@ class WorkforceViewModel(
 
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
+
+    /**
+     * Generic flag flipped to `true` while a create/update/delete action is
+     * in flight. Screens read this to render a modal LoadingOverlay.
+     */
+    private val _actionInProgress = MutableStateFlow(false)
+    val actionInProgress: StateFlow<Boolean> = _actionInProgress.asStateFlow()
+
+    /**
+     * Flips to true only after every required Firestore stream has hit its
+     * first emission. Use this — not [loading] alone — to gate shimmer on
+     * dashboards that compose data from multiple sources, so we don't reveal
+     * employee cards while task / attendance counts are still loading.
+     *
+     * Reset on every [loadForAdmin] / [loadForUser] re-bind.
+     */
+    private val _streamsReady = MutableStateFlow(false)
+    val streamsReady: StateFlow<Boolean> = _streamsReady.asStateFlow()
+
+    // Per-stream first-emission flags. When all required ones are primed for
+    // the active role, [_streamsReady] flips to true.
+    private var primedEmployees     = false
+    private var primedTasks         = false
+    private var primedAttendance    = false
+    private var primedLeaveRequests = false
+    private var primedSpareItems    = false
+
+    private fun maybeMarkAdminStreamsReady() {
+        if (primedEmployees && primedTasks && primedAttendance && primedLeaveRequests) {
+            _streamsReady.value = true
+        }
+    }
+
+    private fun maybeMarkUserStreamsReady() {
+        // Users only need their own tasks + leave history to render the home.
+        if (primedTasks && primedLeaveRequests) {
+            _streamsReady.value = true
+        }
+    }
+
+    private fun resetStreamPriming() {
+        primedEmployees     = false
+        primedTasks         = false
+        primedAttendance    = false
+        primedLeaveRequests = false
+        primedSpareItems    = false
+        _streamsReady.value = false
+    }
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
@@ -153,28 +210,50 @@ class WorkforceViewModel(
         attendanceJob?.cancel()
         spareItemsJob?.cancel()
         leaveRequestsJob?.cancel()
+        inventoryTxnsJob?.cancel()
         _error.value = null
         _loading.value = true
+        resetStreamPriming()
 
         employeesJob = directory.observeEmployees(adminUid)
             .onEach {
                 _employees.value = it
                 _loading.value = false
+                primedEmployees = true
+                maybeMarkAdminStreamsReady()
             }
             .catch {
                 setError(it.message)
                 _loading.value = false
+                primedEmployees = true
+                maybeMarkAdminStreamsReady()
             }
             .launchIn(viewModelScope)
 
         tasksJob = directory.observeTasksForAdmin(adminUid)
-            .onEach { _tasks.value = it }
-            .catch { setError(it.message) }
+            .onEach {
+                _tasks.value = it
+                primedTasks = true
+                maybeMarkAdminStreamsReady()
+            }
+            .catch {
+                setError(it.message)
+                primedTasks = true
+                maybeMarkAdminStreamsReady()
+            }
             .launchIn(viewModelScope)
 
         attendanceJob = directory.observeAttendance(adminUid)
-            .onEach { _attendance.value = it }
-            .catch { setError(it.message) }
+            .onEach {
+                _attendance.value = it
+                primedAttendance = true
+                maybeMarkAdminStreamsReady()
+            }
+            .catch {
+                setError(it.message)
+                primedAttendance = true
+                maybeMarkAdminStreamsReady()
+            }
             .launchIn(viewModelScope)
 
         checkinsJob = directory.observeCheckins(adminUid)
@@ -183,12 +262,33 @@ class WorkforceViewModel(
             .launchIn(viewModelScope)
 
         spareItemsJob = directory.observeSpareItems(adminUid)
-            .onEach { _spareItems.value = it }
-            .catch { setError(it.message) }
+            .onEach {
+                _spareItems.value = it
+                primedSpareItems = true
+            }
+            .catch {
+                setError(it.message)
+                primedSpareItems = true
+            }
             .launchIn(viewModelScope)
 
         leaveRequestsJob = directory.observeLeaveRequestsForAdmin(adminUid)
-            .onEach { _leaveRequests.value = it }
+            .onEach {
+                _leaveRequests.value = it
+                primedLeaveRequests = true
+                maybeMarkAdminStreamsReady()
+            }
+            .catch {
+                setError(it.message)
+                primedLeaveRequests = true
+                maybeMarkAdminStreamsReady()
+            }
+            .launchIn(viewModelScope)
+
+        // Phase 2 / Case 2 — inventory transactions (admin-side only). Used
+        // by ReportsScreen to split consumption into "from tasks" vs manual.
+        inventoryTxnsJob = directory.observeInventoryTransactions(adminUid)
+            .onEach { _inventoryTxns.value = it }
             .catch { setError(it.message) }
             .launchIn(viewModelScope)
     }
@@ -208,17 +308,23 @@ class WorkforceViewModel(
         attendanceJob?.cancel()
         spareItemsJob?.cancel()
         leaveRequestsJob?.cancel()
+        inventoryTxnsJob?.cancel()
         _error.value = null
         _loading.value = true
+        resetStreamPriming()
 
         tasksJob = directory.observeTasksForUser(userUid)
             .onEach {
                 _tasks.value = it
                 _loading.value = false
+                primedTasks = true
+                maybeMarkUserStreamsReady()
             }
             .catch {
                 setError(it.message)
                 _loading.value = false
+                primedTasks = true
+                maybeMarkUserStreamsReady()
             }
             .launchIn(viewModelScope)
 
@@ -245,8 +351,16 @@ class WorkforceViewModel(
         }
 
         leaveRequestsJob = directory.observeLeaveRequestsForUser(userUid)
-            .onEach { _leaveRequests.value = it }
-            .catch { setError(it.message) }
+            .onEach {
+                _leaveRequests.value = it
+                primedLeaveRequests = true
+                maybeMarkUserStreamsReady()
+            }
+            .catch {
+                setError(it.message)
+                primedLeaveRequests = true
+                maybeMarkUserStreamsReady()
+            }
             .launchIn(viewModelScope)
 
         if (!adminUid.isNullOrBlank()) {
@@ -339,6 +453,7 @@ class WorkforceViewModel(
     ) {
         viewModelScope.launch {
             _loading.value = true
+            _actionInProgress.value = true
             _error.value = null
             val auth = employeeAuthClient.createEmployee(
                 email = draft.email,
@@ -350,6 +465,7 @@ class WorkforceViewModel(
                     AppLog.w("WorkforceVM", "createEmployee auth failed: ${auth.error.message}")
                     _error.value = auth.error.message
                     _loading.value = false
+                    _actionInProgress.value = false
                     onDone(Result.failure(IllegalStateException(auth.error.message)))
                     return@launch
                 }
@@ -361,6 +477,7 @@ class WorkforceViewModel(
                         setError(it.message)
                     }
                     _loading.value = false
+                    _actionInProgress.value = false
                     onDone(result)
                 }
             }
@@ -380,6 +497,7 @@ class WorkforceViewModel(
     ) {
         viewModelScope.launch {
             _loading.value = true
+            _actionInProgress.value = true
             _error.value = null
             val result = runCatching { directory.updateEmployee(adminUid, employeeId, draft) }
             result.onFailure {
@@ -387,6 +505,7 @@ class WorkforceViewModel(
                 setError(it.message)
             }
             _loading.value = false
+            _actionInProgress.value = false
             onDone(result)
         }
     }
@@ -412,17 +531,26 @@ class WorkforceViewModel(
         dueDate: Long? = null,
         ownerAdminName: String = "",
         assigneeName: String = "",
+        notifyAssignee: Boolean = true,
+        assigneeIds: List<String> = emptyList(),
+        assigneeNames: List<String> = emptyList(),
+        onDone: (Result<Unit>) -> Unit = {},
     ) {
         viewModelScope.launch {
-            runCatching {
+            _actionInProgress.value = true
+            val result = runCatching {
                 directory.addTask(
                     adminUid, userId, title, location, time, day, priority,
                     description,
                     departmentId, departmentName, equipmentId, equipmentName,
                     checklist, attachments, address, latitude, longitude,
-                    dueDate, ownerAdminName, assigneeName,
+                    dueDate, ownerAdminName, assigneeName, notifyAssignee,
+                    assigneeIds, assigneeNames,
                 )
-            }.onFailure { setError(it.message) }
+            }
+            result.onFailure { setError(it.message) }
+            _actionInProgress.value = false
+            onDone(result.map { })
         }
     }
 
@@ -453,17 +581,51 @@ class WorkforceViewModel(
         longitude: Double? = null,
         dueDate: Long? = null,
         assigneeName: String = "",
+        notifyAssignee: Boolean = true,
+        assigneeIds: List<String> = emptyList(),
+        assigneeNames: List<String> = emptyList(),
+        onDone: (Result<Unit>) -> Unit = {},
     ) {
         viewModelScope.launch {
-            runCatching {
+            _actionInProgress.value = true
+            val result = runCatching {
                 directory.updateTask(
                     taskId, adminUid, userId, title, location, time, day, priority,
                     description,
                     departmentId, departmentName, equipmentId, equipmentName,
                     checklist, attachments, address, latitude, longitude,
-                    dueDate, assigneeName,
+                    dueDate, assigneeName, notifyAssignee,
+                    assigneeIds, assigneeNames,
                 )
-            }.onFailure { setError(it.message) }
+            }
+            result.onFailure { setError(it.message) }
+            _actionInProgress.value = false
+            onDone(result.map { })
+        }
+    }
+
+    /**
+     * Reassign a task to a new set of users (used by the user-side "Reassign"
+     * button on InReview tasks). Status is preserved server-side.
+     */
+    fun reassignTask(
+        taskId: String,
+        adminUid: String,
+        newAssigneeIds: List<String>,
+        newAssigneeNames: List<String>,
+        onDone: (Result<Unit>) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            _actionInProgress.value = true
+            val result = runCatching {
+                directory.reassignTask(taskId, adminUid, newAssigneeIds, newAssigneeNames)
+            }
+            result.onFailure {
+                AppLog.w("WorkforceVM", "reassignTask failed: ${it.message}")
+                setError(it.message)
+            }
+            _actionInProgress.value = false
+            onDone(result.map { })
         }
     }
 
@@ -558,6 +720,7 @@ class WorkforceViewModel(
         onDone: (Result<TaskRecord>) -> Unit = {},
     ) {
         viewModelScope.launch {
+            _actionInProgress.value = true
             val result = runCatching {
                 directory.completeTaskWithSignoff(
                     adminId, taskId, assignedUserId,
@@ -566,6 +729,7 @@ class WorkforceViewModel(
                 )
             }
             result.onFailure { AppLog.w("WorkforceVM", "completeTaskWithSignoff failed: ${it.message}") }
+            _actionInProgress.value = false
             onDone(result)
         }
     }
@@ -594,15 +758,63 @@ class WorkforceViewModel(
         authorName: String,
         role: String,
         message: String,
+        voiceUrl: String? = null,
+        voiceDurationMs: Long? = null,
     ) {
-        if (message.isBlank()) return
+        // Allow blank message only when a voice attachment is present.
+        if (message.isBlank() && voiceUrl == null) return
         viewModelScope.launch {
             runCatching {
-                directory.addTaskNote(taskId, authorId, authorName, role, message.trim())
+                directory.addTaskNote(
+                    taskId          = taskId,
+                    authorId        = authorId,
+                    authorName      = authorName,
+                    role            = role,
+                    message         = message.trim(),
+                    voiceUrl        = voiceUrl,
+                    voiceDurationMs = voiceDurationMs,
+                )
             }.onFailure {
                 AppLog.w("WorkforceVM", "addTaskNote failed: ${it.message}")
                 setError(it.message)
             }
+        }
+    }
+
+    /**
+     * Upload a recorded voice clip and post it as a chat note on the task.
+     * Wraps the two-step (upload → addTaskNote) so callers don't have to
+     * juggle suspending state on the UI side.
+     */
+    fun postVoiceNote(
+        adminId      : String,
+        taskId       : String,
+        authorId     : String,
+        authorName   : String,
+        role         : String,
+        contentUri   : String,
+        durationMs   : Long,
+        onDone       : (Result<Unit>) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            val result = runCatching {
+                val url = directory.uploadVoiceNote(adminId, contentUri)
+                directory.addTaskNote(
+                    taskId          = taskId,
+                    authorId        = authorId,
+                    authorName      = authorName,
+                    role            = role,
+                    message         = "",
+                    voiceUrl        = url,
+                    voiceDurationMs = durationMs,
+                )
+                Unit
+            }
+            result.onFailure {
+                AppLog.w("WorkforceVM", "postVoiceNote failed: ${it.message}")
+                setError(it.message)
+            }
+            onDone(result)
         }
     }
 
@@ -658,6 +870,7 @@ class WorkforceViewModel(
     ) {
         viewModelScope.launch {
             _loading.value = true
+            _actionInProgress.value = true
             val result = runCatching {
                 directory.submitLeaveRequest(
                     adminId, userId, employeeName, department,
@@ -669,17 +882,21 @@ class WorkforceViewModel(
                 setError(it.message)
             }
             _loading.value = false
+            _actionInProgress.value = false
             onDone(result)
         }
     }
 
-    fun approveLeave(leaveId: String, adminId: String, userId: String) {
+    fun approveLeave(leaveId: String, adminId: String, userId: String, onDone: (Result<Unit>) -> Unit = {}) {
         viewModelScope.launch {
-            runCatching { directory.updateLeaveStatus(leaveId, adminId, userId, "approved") }
+            _actionInProgress.value = true
+            val r = runCatching { directory.updateLeaveStatus(leaveId, adminId, userId, "approved") }
                 .onFailure {
                     AppLog.w("WorkforceVM", "approveLeave failed: ${it.message}")
                     setError(it.message)
                 }
+            _actionInProgress.value = false
+            onDone(r)
         }
     }
 
@@ -688,17 +905,53 @@ class WorkforceViewModel(
         adminId: String,
         userId: String,
         rejectionReason: String = "",
+        onDone: (Result<Unit>) -> Unit = {},
     ) {
         viewModelScope.launch {
-            runCatching {
+            _actionInProgress.value = true
+            val r = runCatching {
                 directory.updateLeaveStatus(leaveId, adminId, userId, "rejected", rejectionReason)
             }.onFailure {
                 AppLog.w("WorkforceVM", "rejectLeave failed: ${it.message}")
                 setError(it.message)
             }
+            _actionInProgress.value = false
+            onDone(r)
         }
     }
 
+
+    // ─── Reports — monthly stock snapshot passthrough ────────────────────────
+    //
+    // Phase 2 / Case 3: the snapshotMonthlyStock Cloud Function writes an
+    // opening-stock doc per admin per month. ReportsScreen subscribes to the
+    // snapshot for the *previous* month (i.e. the report month's opening) and
+    // passes it into ReportsAggregator. We don't cache it on the VM because
+    // the selected report month changes as the user paginates — wrapping the
+    // directory flow keeps the subscription scoped to that screen.
+    fun monthlyStockSnapshotFlow(
+        adminId: String, year: Int, month: Int,
+    ): kotlinx.coroutines.flow.Flow<com.example.uniwattelektrik.feature.workforce.data.remote.MonthlyStockSnapshot?> =
+        directory.observeMonthlyStockSnapshot(adminId, year, month)
+
+    /**
+     * Phase 3 / Case 2: combine N adjacent monthly snapshot flows into a
+     * single list flow for trend sparklines. [months] is ordered
+     * oldest → newest; the returned list mirrors that order and emits
+     * `null` for months whose snapshot doc doesn't exist yet.
+     */
+    fun monthlyStockHistoryFlow(
+        adminId: String,
+        months : List<Pair<Int, Int>>,   // (year, monthNumber)
+    ): kotlinx.coroutines.flow.Flow<List<com.example.uniwattelektrik.feature.workforce.data.remote.MonthlyStockSnapshot?>> {
+        if (months.isEmpty() || adminId.isBlank()) {
+            return kotlinx.coroutines.flow.flowOf(emptyList())
+        }
+        val flows = months.map { (y, m) ->
+            directory.observeMonthlyStockSnapshot(adminId, y, m)
+        }
+        return kotlinx.coroutines.flow.combine(flows) { arr -> arr.toList() }
+    }
 
     // ─── Danger zone ─────────────────────────────────────────────────────────
 

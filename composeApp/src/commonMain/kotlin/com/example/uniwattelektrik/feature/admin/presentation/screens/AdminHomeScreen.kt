@@ -37,6 +37,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import com.example.uniwattelektrik.core.components.AppPullToRefresh
+import com.example.uniwattelektrik.core.components.PremiumBrandFooter
+import com.example.uniwattelektrik.core.components.PremiumCarousel
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -64,6 +66,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -113,15 +116,33 @@ private val ShadowSoft   = AppTheme.ShadowMd
 // Previously missing — now resolved via design system
 private val Highlight    = AppTheme.Brand
 private val HighlightLt  = AppTheme.Brand50
+
+// ── Premium polish tokens for the local `premiumCard` modifier ────────────
+// The modifier's structure (multi-layer shadows, 3-stop surface gradient,
+// inner top-highlight, brand ambient glow) was already in place but the
+// underlying tokens were neutral / zero-alpha, so the KPI tiles read as flat
+// white. Activating them here gives the dashboard cards the same top-light
+// + ambient-brand-glow polish that AppCard now has app-wide.
 private val NavyMid      = AppTheme.Ink700
 private val Navy         = AppTheme.Navy
-private val InnerHi      = Color.Transparent
-private val GlowShadow   = Color.Transparent
+// Top-edge inner reflection — fully opaque white, fading to transparent
+// over the upper 32 % of the card. Reads as a clear glass shine.
+private val InnerHi      = Color.White
+// Specular line at the very top — near-pure-white 1.5dp stripe drawn over
+// the inner highlight. Mimics a chrome reflection without going glossy.
+private val SpecularLine = Color.White
+// Brand-blue ambient glow on the widest shadow layer — at 22 % each tile
+// has an unmistakable "powered-on" lift, while still staying premium
+// (not gaming-neon).
+private val GlowShadow   = AppTheme.Brand.copy(alpha = 0.22f)
 private val SoftShadow1  = AppTheme.ShadowMd
 private val SoftShadow2  = AppTheme.ShadowSm
-private val CardTop      = AppTheme.Surface
-private val CardMid      = AppTheme.Surface
-private val CardBottom   = AppTheme.Surface
+// 3-stop surface gradient: now with a tangible cool-blue base so the
+// top-light highlight has something to contrast against. The shift is
+// still subtle but visible side-by-side with the old flat-white card.
+private val CardTop      = Color(0xFFFDFEFF)
+private val CardMid      = Color(0xFFF7FAFF)
+private val CardBottom   = Color(0xFFEEF3FB)
 private val CardBorder   = AppTheme.Ink100
 private val ScreenBg0    = AppTheme.Bg
 private val ScreenBg1    = AppTheme.Bg
@@ -168,18 +189,38 @@ private fun Modifier.premiumCard(
         spotColor    = SoftShadow2,
     )
     .clip(shape)
-    // Frosted-glass surface: cool grey-white → grey-blue gradient (3-stop) gives
-    // a soft "blurred glass" interior without needing a real blur.
+    // Frosted-glass surface: 3-stop cool-blue sweep gives the card visible
+    // depth — light at the top, cooler at the bottom.
     .background(Brush.verticalGradient(listOf(CardTop, CardMid, CardBottom)))
-    // 2px solid white border to clearly define the card's rounded corners.
+    // 1px hairline border to define the silhouette against the page mesh.
     .border(width = 1.dp, color = CardBorder, shape = shape)
-    // Inner top-highlight: 70 % white fading to transparent over the top 40 %.
+    // Two-pass top-lighting:
+    //   1) An "inner glass shine" — bright near-white at the top fading to
+    //      transparent over the upper 32 %.
+    //   2) A specular highlight stripe at the very top edge (1.5dp tall)
+    //      that fades horizontally from clear→bright-white→clear. Reads as
+    //      a chrome reflection along the upper rim.
     .drawBehind {
+        // Inner glass shine.
         drawRect(
             brush = Brush.verticalGradient(
                 colors = listOf(InnerHi, Color.Transparent),
-                endY   = size.height * 0.40f,
+                endY   = size.height * 0.32f,
             ),
+        )
+        // Specular line at the top edge.
+        val specularHeight = 1.5.dp.toPx()
+        drawRect(
+            brush = Brush.horizontalGradient(
+                colors = listOf(
+                    Color.Transparent,
+                    SpecularLine,
+                    SpecularLine.copy(alpha = SpecularLine.alpha * 0.65f),
+                    Color.Transparent,
+                ),
+            ),
+            topLeft = Offset(0f, 0f),
+            size    = Size(size.width, specularHeight),
         )
     }
 
@@ -196,6 +237,12 @@ fun AdminHomeScreen(
     onLeaveRequestsClick: () -> Unit = {},
     onViewAllTasks: () -> Unit = {},
     onViewAllEmployees: () -> Unit = {},
+    /** Tap on the "Pending" KPI card → tasks board, Pending tab focused. */
+    onPendingTasksClick: () -> Unit = onViewAllTasks,
+    /** Tap on the "Completed" KPI card → tasks board, Done tab focused. */
+    onCompletedTasksClick: () -> Unit = onViewAllTasks,
+    /** Tap on the "Alerts" pulse pill → AlertsScreen. */
+    onAlertsClick: () -> Unit = {},
     onViewInventory: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -206,6 +253,11 @@ fun AdminHomeScreen(
     val spareItems     by inventoryVm.spareItems.collectAsStateWithLifecycle()
     val leaveRequests  by workforceVm.leaveRequests.collectAsStateWithLifecycle()
     val workforceLoading by workforceVm.loading.collectAsStateWithLifecycle()
+    // Use the coordinated readiness flag so the shimmer doesn't lift until
+    // every dashboard stream (employees + tasks + attendance + leaves) has
+    // emitted at least once — otherwise KPI cards flash zeros while data is
+    // still arriving.
+    val streamsReady     by workforceVm.streamsReady.collectAsStateWithLifecycle()
 
     val totalEmployees  = employees.size.coerceAtLeast(0)
     val activeTasks     = tasks.count { it.status != "Done" }
@@ -228,7 +280,9 @@ fun AdminHomeScreen(
         label = "kpi-alpha",
     )
 
-    // Live wall-clock minute (drives greeting ⏰ recompute around the boundaries)
+    // Live wall-clock minute (drives "X minutes ago" stamps in the recent
+    // activity feed). Tick rate is 60 s — coarse enough not to feel jittery,
+    // fine enough that the feed never lies by more than ~one minute.
     var nowMs by remember { mutableStateOf(nowEpochMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -236,7 +290,11 @@ fun AdminHomeScreen(
             kotlinx.coroutines.delay(60_000L)
         }
     }
-    val (greetingText, greetingEmoji) = greetingFor(nowMs)
+    // Greeting only changes at hour boundaries — memoise so the per-minute
+    // nowMs tick can't trigger a recomposition cascade through this screen
+    // for a value that doesn't change. Bucketing by `nowMs / 3_600_000` keys
+    // remember on the hour rather than the millisecond.
+    val (greetingText, greetingEmoji) = remember(nowMs / 3_600_000L) { greetingFor(nowMs) }
 
     val recentTasks = remember(tasks) {
         tasks.sortedByDescending {
@@ -266,9 +324,9 @@ fun AdminHomeScreen(
     }
     val sparklinePoints = remember(tasks, nowMs) { sparkline7Day(tasks, nowMs) }
 
-    // Push a status-bar style that matches the gradient header.
+    // Status bar tracks the new operations header surface.
     SetStatusBar(
-        color = com.example.uniwattelektrik.core.components.PremiumHeaderStatusBarColor,
+        color = com.example.uniwattelektrik.core.components.OperationsHeaderStatusBarColor,
         darkIcons = false,
     )
 
@@ -303,22 +361,29 @@ fun AdminHomeScreen(
             onBell     = onOpenNotifications,
         )
 
-        if (workforceLoading) {
+        // Show the skeleton while ANY of the dashboard's data streams is still
+        // pending its first emission (coordinated shimmer). Falls back to the
+        // legacy `workforceLoading` flag if streamsReady is true but we're
+        // mid-explicit-refresh.
+        if (!streamsReady || workforceLoading) {
             HomeContentSkeleton(modifier = Modifier.fillMaxSize().weight(1f))
         } else {
         AppPullToRefresh(onRefresh = { workforceVm.refresh() }) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             state = listState,
-            contentPadding = PaddingValues(top = 20.dp, bottom = 110.dp),
+            // Bottom = nav-bar height so the dark brand-footer sits flush
+            // against the top of the dark nav, reading as one unified band.
+            contentPadding = PaddingValues(top = 20.dp, bottom = 76.dp),
             verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
             // 0. Live status strip — at-a-glance system pulse pills.
             item {
                 LiveStatusStrip(
-                    online    = totalEmployees.coerceAtMost(99),
-                    liveTasks = activeTasks,
-                    alerts    = pendingHigh,
+                    online        = totalEmployees.coerceAtMost(99),
+                    liveTasks     = activeTasks,
+                    alerts        = pendingHigh,
+                    onAlertsClick = onAlertsClick,
                 )
             }
 
@@ -369,7 +434,7 @@ fun AdminHomeScreen(
                         badgeBg      = Color(0xFFDCFCE7),
                         badgeFg      = Success,
                         alpha        = gridAlpha,
-                        onClick      = onViewAllTasks,
+                        onClick      = onCompletedTasksClick,
                     )
                     KpiCard(
                         modifier     = Modifier.weight(1f),
@@ -381,7 +446,7 @@ fun AdminHomeScreen(
                         badgeBg      = if (pendingHigh > 0) Color(0xFFFEE2E2) else Color(0xFFDCFCE7),
                         badgeFg      = if (pendingHigh > 0) Danger else Success,
                         alpha        = gridAlpha,
-                        onClick      = onViewAllTasks,
+                        onClick      = onPendingTasksClick,
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -413,13 +478,21 @@ fun AdminHomeScreen(
             }
         }
 
+        // 2.5 Auto-sliding premium carousel — brand banner section
+        item {
+            PremiumCarousel(
+                modifier      = Modifier.padding(horizontal = 20.dp),
+                onSlideAction = { onViewAllTasks() },
+            )
+        }
+
         // 3. Performance chart — real data, week/month/year, bar + line
         item {
             PerformanceChartSection(
                 tasks     = tasks,
                 employees = employees,
                 nowMs     = nowMs,
-                modifier  = Modifier.padding(horizontal = 20.dp),
+                modifier  = Modifier.padding(horizontal = 12.dp),
             )
         }
 
@@ -554,6 +627,12 @@ fun AdminHomeScreen(
                 }
             }
         }
+
+        // 5. Premium brand footer — full-bleed dark band that visually fuses
+        //    with the dark bottom-nav into a single industrial branding strip.
+        item {
+            PremiumBrandFooter()
+        }
         }   // LazyColumn
         }   // AppPullToRefresh
         }   // else (not loading)
@@ -644,45 +723,13 @@ private fun AdminHomeHeader(
     greetingEmoji: String,
     onBell: () -> Unit,
 ) {
-    com.example.uniwattelektrik.core.components.PremiumHeaderBackground(
-        modifier = Modifier
-            .shadow(
-                elevation    = 18.dp,
-                shape        = RoundedCornerShape(bottomStart = 30.dp, bottomEnd = 30.dp),
-                ambientColor = Color.Transparent,
-                spotColor    = Color(0x14000000),
-            ),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 22.dp)
-                .padding(top = 14.dp, bottom = 26.dp),
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                // Title row: "Admin Console" + "OPS OVERVIEW" subtitle + bell
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Admin Console", style = AppTypography.HeaderTitle)
-                        Text(
-                            text = "Operation Overview",
-                            style = AppTypography.HeaderSubtitle,
-                            color = Color(0xCCFFFFFF),    // 80 % white — lighter opacity
-                        )
-                    }
-                    BellIcon(onClick = onBell, showDot = true)
-                }
-
-                // Greeting — slightly brighter white for emphasis.
-                Text(
-                    text  = "$greetingText, $adminName $greetingEmoji",
-                    style = AppTypography.HeaderGreeting,
-                    color = Color.White,
-                )
-            }
-        }
-    }
+    com.example.uniwattelektrik.core.components.OperationsHeader(
+        eyebrow       = "ADMIN CONSOLE",
+        eyebrowDetail = "UniWatt Elektrik",
+        title         = "$greetingText, $adminName $greetingEmoji",
+        subtitle      = "Operations overview",
+        actions       = { BellIcon(onClick = onBell, showDot = true) },
+    )
 }
 
 /**
@@ -1127,7 +1174,12 @@ private fun greetingFor(nowMs: Long): Pair<String, String> {
  *  Communicates real-time system health at a glance.
  * ────────────────────────────────────────────────────────────────────────── */
 @Composable
-private fun LiveStatusStrip(online: Int, liveTasks: Int, alerts: Int) {
+private fun LiveStatusStrip(
+    online       : Int,
+    liveTasks    : Int,
+    alerts       : Int,
+    onAlertsClick: () -> Unit = {},
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1151,6 +1203,7 @@ private fun LiveStatusStrip(online: Int, liveTasks: Int, alerts: Int) {
             color    = if (alerts > 0) Danger else Success,
             label    = if (alerts > 0) "Alerts" else "All Clear",
             value    = alerts.toString().takeIf { alerts > 0 } ?: "✓",
+            onClick  = onAlertsClick,
         )
     }
 }
@@ -1161,6 +1214,7 @@ private fun StatusPulsePill(
     color: Color,
     label: String,
     value: String,
+    onClick: (() -> Unit)? = null,
 ) {
     val t = rememberInfiniteTransition(label = "pulse-$label")
     val s by t.animateFloat(
@@ -1182,6 +1236,7 @@ private fun StatusPulsePill(
             )
             .clip(RoundedCornerShape(999.dp))
             .background(Color.White)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),

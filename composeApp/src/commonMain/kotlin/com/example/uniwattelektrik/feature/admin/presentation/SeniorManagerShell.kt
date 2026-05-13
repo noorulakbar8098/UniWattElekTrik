@@ -210,24 +210,30 @@ fun SeniorManagerShell(
                         onEdit      = { item -> nav.navigate(SeniorManagerRoute.SpareItemForm(item)) },
                         onItemClick = { item -> nav.navigate(SeniorManagerRoute.SpareItemDetail(item)) },
                     )
-                is SeniorManagerRoute.SpareItemDetail ->
+                is SeniorManagerRoute.SpareItemDetail -> {
+                    // Reflect live edits when returning from the Form.
+                    val liveSpares by inventoryVm.spareItems.collectAsStateWithLifecycle()
+                    val freshItem = liveSpares.firstOrNull { it.id == r.item.id } ?: r.item
                     com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItemDetailScreen(
-                        item    = r.item,
+                        item    = freshItem,
                         onBack  = { nav.pop() },
-                        onEdit  = { nav.pop(); nav.navigate(SeniorManagerRoute.SpareItemForm(r.item)) },
+                        onEdit  = {
+                            // Push Form on top of Detail so Save/Back returns
+                            // to the Detail (Spare view) screen — not the list.
+                            nav.navigate(SeniorManagerRoute.SpareItemForm(freshItem))
+                        },
                         onDelete = {
-                            inventoryVm.deleteSpareItem(adminUid, r.item.id)
-                            nav.pop()
+                            inventoryVm.deleteSpareItem(adminUid, freshItem.id) { nav.pop() }
                         },
                     )
+                }
                 is SeniorManagerRoute.SpareItemForm ->
                     com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItemFormScreen(
                         initial     = r.item,
                         onBack      = { nav.pop() },
                         inventoryVm = inventoryVm,
                         onSave      = { item ->
-                            inventoryVm.saveSpareItem(adminUid, item)
-                            nav.pop()
+                            inventoryVm.saveSpareItem(adminUid, item) { nav.pop() }
                         },
                     )
                 SeniorManagerRoute.ImportSpareItemsPreview ->

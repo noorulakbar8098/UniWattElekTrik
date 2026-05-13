@@ -99,6 +99,13 @@ fun SpareListScreen(
             item.make.contains(q, ignoreCase = true)
         catOk && textOk
     }
+        // Newest spares first. Items without a creation timestamp fall back
+        // to alphabetical for a stable, deterministic order.
+        .sortedWith(
+            compareByDescending<com.example.uniwattelektrik.feature.admin.presentation.screens.inventory.SpareItem> {
+                it.createdAtMs ?: 0L
+            }.thenBy { it.name.lowercase() }
+        )
 
     // ── Multi-selection state ───────────────────────────────────────────────
     val selectedIds = remember { mutableStateMapOf<String, Boolean>() }

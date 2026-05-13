@@ -19,6 +19,10 @@ import kotlinx.coroutines.flow.onEach
  *
  * Triggers:
  *  - Task transitions to `status == "Done"` → "Task completed".
+ *  - Task transitions out of "Done" (reopen) → "Task reopened".
+ *  - Task transitions from no-acceptedAt → has-acceptedAt → "Task accepted".
+ *  - A task's checklist `done` count grows → "Checklist updated".
+ *  - A task's attachment list grows → "New photo / file added".
  *  - Leave request created with `status == "pending"` → "Leave request".
  *  - Attendance record with `checkInStatus == "LATE"` → "Late check-in".
  *  - Spare item `stockQty` crosses below 20 → "Low stock".
@@ -40,33 +44,104 @@ class AdminNotificationsCoordinator(
         val childScope = CoroutineScope(scope.coroutineContext + parent)
         job = parent
 
-        // ── Tasks: notify when one transitions into "Done" ──────────────────
+        // ── Tasks: notify on every meaningful per-task transition ───────────
+        // We snapshot four fields per task across emissions and fire a
+        // distinct notification when any of them transitions in a way the
+        // admin should know about. All five derivations share one Firestore
+        // subscription — much cheaper than a flow-per-trigger fan-out.
         run {
-            val seenDone = mutableSetOf<String>()
+            data class TaskSnap(
+                val status: String,
+                val acceptedAt: Long?,
+                val checklistDone: Int,
+                val attachmentsCount: Int,
+            )
+            val prev = mutableMapOf<String, TaskSnap>()
             var primed = false
             directory.observeTasksForAdmin(adminId)
                 .onEach { tasks ->
-                    val doneIds = tasks.asSequence()
-                        .filter { it.status.equals("Done", ignoreCase = true) }
-                        .map { it.id }
-                        .toSet()
+                    val current = tasks.associate { t ->
+                        t.id to TaskSnap(
+                            status           = t.status,
+                            acceptedAt       = t.acceptedAt,
+                            checklistDone    = t.checklist.count { it.done },
+                            attachmentsCount = t.attachments.size,
+                        )
+                    }
                     if (!primed) {
-                        seenDone.addAll(doneIds)
+                        prev.putAll(current)
                         primed = true
                         return@onEach
                     }
-                    val newlyDone = doneIds - seenDone
-                    seenDone.clear(); seenDone.addAll(doneIds)
-                    newlyDone.forEach { id ->
-                        val t = tasks.firstOrNull { it.id == id } ?: return@forEach
+                    tasks.forEach { t ->
+                        val before = prev[t.id]
+                        val after  = current[t.id] ?: return@forEach
+                        prev[t.id] = after
+                        // Per-task admin preference: when the admin un-ticked
+                        // "Notify" while creating / editing this task we stay
+                        // silent across every transition, including completion.
+                        if (!t.notifyAssignee) return@forEach
                         val who = t.assigneeName.ifBlank { "Employee" }
-                        notifier.notify(
-                            id = stableId("task_done", t.id),
-                            title = "Task completed",
-                            body = "$who marked \"${t.title}\" as done",
-                            routeKey = "tasks",
-                        )
+
+                        // 1. Task accepted (acceptedAt was null, now set).
+                        if (before != null && before.acceptedAt == null && after.acceptedAt != null) {
+                            notifier.notify(
+                                id       = stableId("task_accepted", t.id),
+                                title    = "Task accepted",
+                                body     = "$who accepted \"${t.title}\"",
+                                routeKey = "tasks",
+                                taskId   = t.id,
+                            )
+                        }
+                        // 2. Task completed.
+                        if ((before == null || !before.status.equals("Done", ignoreCase = true))
+                            && after.status.equals("Done", ignoreCase = true)) {
+                            notifier.notify(
+                                id       = stableId("task_done", t.id),
+                                title    = "Task completed",
+                                body     = "$who marked \"${t.title}\" as done",
+                                routeKey = "tasks",
+                                taskId   = t.id,
+                            )
+                        }
+                        // 3. Task reopened (was Done, now active again).
+                        if (before != null
+                            && before.status.equals("Done", ignoreCase = true)
+                            && !after.status.equals("Done", ignoreCase = true)) {
+                            notifier.notify(
+                                id       = stableId("task_reopened", t.id),
+                                title    = "Task reopened",
+                                body     = "$who reopened \"${t.title}\"",
+                                routeKey = "tasks",
+                                taskId   = t.id,
+                            )
+                        }
+                        // 4. Checklist progress (a previously-unchecked item got ticked).
+                        if (before != null && after.checklistDone > before.checklistDone) {
+                            val total = t.checklist.size
+                            notifier.notify(
+                                id       = stableId("task_checklist", t.id),
+                                title    = "Checklist updated",
+                                body     = "$who ticked an item on \"${t.title}\" · ${after.checklistDone}/$total",
+                                routeKey = "tasks",
+                                taskId   = t.id,
+                            )
+                        }
+                        // 5. New attachment added (photo / file / signature).
+                        if (before != null && after.attachmentsCount > before.attachmentsCount) {
+                            val n = after.attachmentsCount - before.attachmentsCount
+                            notifier.notify(
+                                id       = stableId("task_attachment", t.id),
+                                title    = if (n == 1) "New attachment" else "New attachments",
+                                body     = "$who added ${if (n == 1) "a file" else "$n files"} to \"${t.title}\"",
+                                routeKey = "tasks",
+                                taskId   = t.id,
+                            )
+                        }
                     }
+                    // Drop entries for tasks the admin no longer has so the map
+                    // doesn't grow unboundedly across the session.
+                    prev.keys.retainAll(current.keys)
                 }
                 .catch { /* swallow per-source errors so one bad flow can't crash the app */ }
                 .launchIn(childScope)
@@ -165,6 +240,57 @@ class AdminNotificationsCoordinator(
                 .catch { /* swallow per-source errors so one bad flow can't crash the app */ }
                 .launchIn(childScope)
         }
+
+        // ── Task notes (chat) ───────────────────────────────────────────────
+        // Subscribe to /tasks/{id}/notes for every task this admin owns and
+        // fire a local notification whenever the assigned **user** posts a
+        // note. We diff the active task list per emission so listeners are
+        // added for new tasks and cancelled for removed ones.
+        run {
+            val noteJobs = mutableMapOf<String, Job>()
+            directory.observeTasksForAdmin(adminId)
+                .onEach { tasks ->
+                    val ids = tasks.map { it.id }.toSet()
+                    // Cancel listeners for tasks the admin no longer owns.
+                    val gone = noteJobs.keys - ids
+                    gone.forEach { id -> noteJobs.remove(id)?.cancel() }
+                    // Start a listener for any newly-arrived task.
+                    tasks.forEach { t ->
+                        if (noteJobs.containsKey(t.id)) return@forEach
+                        val seen = mutableSetOf<String>()
+                        var primedTask = false
+                        noteJobs[t.id] = directory.observeTaskNotes(t.id)
+                            .onEach { notes ->
+                                if (!primedTask) {
+                                    notes.forEach { seen.add(it.id) }
+                                    primedTask = true
+                                    return@onEach
+                                }
+                                notes.forEach { n ->
+                                    if (n.id in seen) return@forEach
+                                    seen.add(n.id)
+                                    // Only user-authored notes are interesting
+                                    // to the admin (skip our own echoes).
+                                    if (!n.role.equals("user", ignoreCase = true)) return@forEach
+                                    val who = n.authorName.ifBlank { t.assigneeName.ifBlank { "User" } }
+                                    val body = if (n.message.length > 140)
+                                        n.message.take(137) + "…" else n.message
+                                    notifier.notify(
+                                        id       = stableId("task_note", n.id),
+                                        title    = "$who · ${t.title}",
+                                        body     = body,
+                                        routeKey = "tasks",
+                                        taskId   = t.id,
+                                    )
+                                }
+                            }
+                            .catch { /* one bad note stream shouldn't kill the others */ }
+                            .launchIn(childScope)
+                    }
+                }
+                .catch { /* swallow */ }
+                .launchIn(childScope)
+        }
     }
 
     fun stop() {
@@ -179,4 +305,3 @@ internal fun stableId(kind: String, id: String): Int {
     h = 31 * h + id.hashCode()
     return h and 0x7fffffff
 }
-

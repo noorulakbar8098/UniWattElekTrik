@@ -2,6 +2,8 @@ package com.example.uniwattelektrik.feature.user.presentation.screens
 
 import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,12 +38,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.uniwattelektrik.core.components.DsAllCaughtUpEmptyState
 import com.example.uniwattelektrik.core.components.DsEmptyState
 import com.example.uniwattelektrik.core.components.DsFilterChip
 import com.example.uniwattelektrik.core.components.DsGlassSearchBar
 import com.example.uniwattelektrik.core.components.DsTaskCard
-import com.example.uniwattelektrik.core.components.PremiumHeaderBackground
-import com.example.uniwattelektrik.core.components.PremiumHeaderStatusBarColor
+import com.example.uniwattelektrik.core.components.OperationsHeader
+import com.example.uniwattelektrik.core.components.OperationsHeaderStatusBarColor
 import com.example.uniwattelektrik.core.sample.SampleTask
 import com.example.uniwattelektrik.core.sample.TaskPriority
 import com.example.uniwattelektrik.core.sample.TaskStatus
@@ -103,7 +106,7 @@ fun TaskListScreen(
     val activeCount = remember(allTasks) { allTasks.count { it.status != TaskStatus.Done } }
     val doneCount   = remember(allTasks) { allTasks.count { it.status == TaskStatus.Done } }
 
-    SetStatusBar(color = PremiumHeaderStatusBarColor, darkIcons = false)
+    SetStatusBar(color = OperationsHeaderStatusBarColor, darkIcons = false)
 
     Column(
         modifier = modifier
@@ -161,40 +164,56 @@ fun TaskListScreen(
         }
 
         // ── Task list / empty state ───────────────────────────────────────
-        if (filtered.isEmpty()) {
-            DsEmptyState(
-                emoji = "📋",
-                title = "No tasks match",
-                body  = "Try a different filter or check back later.",
-            )
-        } else {
-            LazyColumn(
-                modifier            = Modifier.fillMaxSize(),
-                contentPadding      = PaddingValues(
-                    start  = AppTheme.SpLg,
-                    end    = AppTheme.SpLg,
-                    top    = AppTheme.SpSm,
-                    bottom = 100.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(AppTheme.SpMd),
-            ) {
-                items(filtered, key = { it.id }) { task ->
-                    DsTaskCard(
-                        taskCode         = taskCode(task),
-                        title            = task.title,
-                        locationText     = "${task.location} · ${task.distanceKm} km",
-                        dueText          = "${task.day}  ${task.time}",
-                        accentColor      = task.priority.accentColor(),
-                        priorityLabel    = task.priority.label,
-                        statusLabel      = task.status.label,
-                        statusColor      = task.status.color,
-                        statusBg         = task.status.bg,
-                        assigneeInitials = task.assigneeInitials,
-                        showProgress     = task.status == TaskStatus.InProgress,
-                        progressFraction = progressFor(task),
-                        isCompleted      = task.status == TaskStatus.Done,
-                        onClick          = { onTaskClick(task.id) },
-                    )
+        // Three target states crossfade smoothly (empty / no-match / list)
+        // so search-result clears and assignments arriving don't pop in.
+        val target = when {
+            allTasks.isEmpty()  -> "empty"
+            filtered.isEmpty()  -> "noMatch"
+            else                -> "list"
+        }
+        Crossfade(
+            targetState   = target,
+            animationSpec = tween(durationMillis = 220),
+            label         = "taskListSwap",
+        ) { state ->
+            when (state) {
+                "empty"   -> DsAllCaughtUpEmptyState(
+                    title = "You're all caught up 🎉",
+                    body  = "No pending tasks for today. Take a well-earned break, or check tomorrow's schedule.",
+                )
+                "noMatch" -> DsEmptyState(
+                    emoji = "📋",
+                    title = "No tasks match",
+                    body  = "Try a different filter or check back later.",
+                )
+                else      -> LazyColumn(
+                    modifier            = Modifier.fillMaxSize(),
+                    contentPadding      = PaddingValues(
+                        start  = AppTheme.SpLg,
+                        end    = AppTheme.SpLg,
+                        top    = AppTheme.SpSm,
+                        bottom = 100.dp,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(AppTheme.SpMd),
+                ) {
+                    items(filtered, key = { it.id }) { task ->
+                        DsTaskCard(
+                            taskCode         = taskCode(task),
+                            title            = task.title,
+                            locationText     = "${task.location} · ${task.distanceKm} km",
+                            dueText          = "${task.day}  ${task.time}",
+                            accentColor      = task.priority.accentColor(),
+                            priorityLabel    = task.priority.label,
+                            statusLabel      = task.status.label,
+                            statusColor      = task.status.color,
+                            statusBg         = task.status.bg,
+                            assigneeInitials = task.assigneeInitials,
+                            showProgress     = task.status == TaskStatus.InProgress,
+                            progressFraction = progressFor(task),
+                            isCompleted      = task.status == TaskStatus.Done,
+                            onClick          = { onTaskClick(task.id) },
+                        )
+                    }
                 }
             }
         }
@@ -210,70 +229,44 @@ private fun TaskListHeader(
     query        : String,
     onQueryChange: (String) -> Unit,
 ) {
-    PremiumHeaderBackground(roundedBottom = true, cornerRadius = 30.dp) {
-        Column(
-            modifier = Modifier
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = AppTheme.SpLg, vertical = AppTheme.SpXl),
-        ) {
-            // Eyebrow row: label + live count badge
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    OperationsHeader(
+        eyebrow  = "MY TASKS",
+        title    = "Task Board",
+        subtitle = "$activeCount active · $doneCount completed",
+        actions  = {
+            Row(
+                modifier          = Modifier
+                    .clip(AppShapes.pill)
+                    .background(Color.White.copy(alpha = 0.10f))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF6EE7B7)),
+                )
+                Spacer(Modifier.width(6.dp))
                 Text(
-                    text  = "MY TASKS",
-                    style = AppTypography.labelSmall.copy(
-                        color         = Color.White.copy(alpha = 0.70f),
-                        letterSpacing = 1.8.sp,
+                    text  = "$activeCount active",
+                    style = AppTypography.captionLarge.copy(
+                        color      = Color.White,
+                        fontWeight = FontWeight.SemiBold,
                     ),
                 )
-                Spacer(Modifier.weight(1f))
-                Row(
-                    modifier          = Modifier
-                        .clip(AppShapes.pill)
-                        .background(Color.White.copy(alpha = 0.18f))
-                        .padding(horizontal = AppTheme.SpSm, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF6EE7B7)),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text  = "$activeCount active",
-                        style = AppTypography.captionLarge.copy(
-                            color      = Color.White,
-                            fontWeight = FontWeight.SemiBold,
-                        ),
-                    )
-                }
             }
-
-            Spacer(Modifier.height(AppTheme.SpMd))
-
-            // Display title
-            Text(
-                text  = "Task Board",
-                style = AppTypography.displayMedium.copy(color = Color.White),
-            )
-            Spacer(Modifier.height(AppTheme.SpXs))
-            Text(
-                text  = "$activeCount active · $doneCount completed",
-                style = AppTypography.bodyMedium.copy(color = Color.White.copy(alpha = 0.80f)),
-            )
-
-            Spacer(Modifier.height(AppTheme.SpXl))
-
-            // Glass search bar embedded in the gradient header
+        },
+        extras = {
+            // Glass search bar embedded in the dark header surface.
             DsGlassSearchBar(
                 query         = query,
                 onQueryChange = onQueryChange,
                 placeholder   = "Search tasks, locations…",
                 onDark        = true,
             )
-        }
-    }
+        },
+    )
 }
 
 /* ── Mapper: Firestore TaskRecord → SampleTask ────────────────────────── */
@@ -297,4 +290,6 @@ private fun TaskRecord.toSampleTask(): SampleTask = SampleTask(
         else         -> TaskStatus.Todo
     },
     assigneeInitials = assigneeInitials.ifBlank { "??" },
+    latitude         = latitude,
+    longitude        = longitude,
 )

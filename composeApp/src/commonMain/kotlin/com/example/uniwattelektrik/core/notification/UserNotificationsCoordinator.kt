@@ -44,12 +44,16 @@ class UserNotificationsCoordinator(
                     seenTasks.clear(); seenTasks.addAll(ids)
                     newIds.forEach { id ->
                         val t = tasks.firstOrNull { it.id == id } ?: return@forEach
+                        // Respect the per-task admin preference set when the
+                        // task was created — silent tasks stay silent.
+                        if (!t.notifyAssignee) return@forEach
                         val from = t.ownerAdminName.ifBlank { "Admin" }
                         notifier.notify(
-                            id = stableId("task_assigned", t.id),
-                            title = "New task assigned",
-                            body = "$from assigned: ${t.title}",
+                            id       = stableId("task_assigned", t.id),
+                            title    = "New task assigned",
+                            body     = "$from assigned: ${t.title}",
                             routeKey = "tasks",
+                            taskId   = t.id,
                         )
                     }
                 }
@@ -95,6 +99,53 @@ class UserNotificationsCoordinator(
                 .catch { /* swallow per-source errors so one bad flow can't crash the app */ }
                 .launchIn(childScope)
         }
+
+        // ── Task notes (chat) ───────────────────────────────────────────────
+        // For every task assigned to this user, listen to /tasks/{id}/notes
+        // and notify when the admin posts. Per-task listeners are added /
+        // cancelled as the assigned-tasks set changes.
+        run {
+            val noteJobs = mutableMapOf<String, Job>()
+            directory.observeTasksForUser(userId)
+                .onEach { tasks ->
+                    val ids = tasks.map { it.id }.toSet()
+                    val gone = noteJobs.keys - ids
+                    gone.forEach { id -> noteJobs.remove(id)?.cancel() }
+                    tasks.forEach { t ->
+                        if (noteJobs.containsKey(t.id)) return@forEach
+                        val seen = mutableSetOf<String>()
+                        var primedTask = false
+                        noteJobs[t.id] = directory.observeTaskNotes(t.id)
+                            .onEach { notes ->
+                                if (!primedTask) {
+                                    notes.forEach { seen.add(it.id) }
+                                    primedTask = true
+                                    return@onEach
+                                }
+                                notes.forEach { n ->
+                                    if (n.id in seen) return@forEach
+                                    seen.add(n.id)
+                                    // Only admin notes notify the user (skip echoes).
+                                    if (!n.role.equals("admin", ignoreCase = true)) return@forEach
+                                    val who = n.authorName.ifBlank { t.ownerAdminName.ifBlank { "Admin" } }
+                                    val body = if (n.message.length > 140)
+                                        n.message.take(137) + "…" else n.message
+                                    notifier.notify(
+                                        id       = stableId("task_note", n.id),
+                                        title    = "$who · ${t.title}",
+                                        body     = body,
+                                        routeKey = "tasks",
+                                        taskId   = t.id,
+                                    )
+                                }
+                            }
+                            .catch { /* one bad note stream shouldn't kill the others */ }
+                            .launchIn(childScope)
+                    }
+                }
+                .catch { /* swallow */ }
+                .launchIn(childScope)
+        }
     }
 
     fun stop() {
@@ -102,4 +153,3 @@ class UserNotificationsCoordinator(
         job = null
     }
 }
-

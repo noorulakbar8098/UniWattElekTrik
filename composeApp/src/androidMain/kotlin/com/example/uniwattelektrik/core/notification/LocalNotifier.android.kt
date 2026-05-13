@@ -26,10 +26,13 @@ actual class LocalNotifier actual constructor() {
         ensureChannel()
     }
 
-    actual fun notify(id: Int, title: String, body: String, routeKey: String?) {
+    actual fun notify(id: Int, title: String, body: String, routeKey: String?, taskId: String?) {
         val launch = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             if (!routeKey.isNullOrBlank()) putExtra("type", routeKey)
+            // Optional task id — MainActivity reads it and forwards through
+            // DeepLinkBus.taskId so the shell can pop the detail screen.
+            if (!taskId.isNullOrBlank()) putExtra("taskId", taskId)
         }
         val pi = PendingIntent.getActivity(
             context,

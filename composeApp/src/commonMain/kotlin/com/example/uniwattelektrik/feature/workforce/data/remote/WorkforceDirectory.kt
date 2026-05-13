@@ -103,6 +103,15 @@ interface WorkforceDirectory {
         dueDate: Long? = null,
         ownerAdminName: String = "",
         assigneeName: String = "",
+        notifyAssignee: Boolean = true,
+        /**
+         * Multi-assignee rollout — when non-empty the task fans out to every
+         * uid in this list. The legacy [userId] / [assigneeName] arguments
+         * remain back-compat mirrors (auto-filled with `assigneeIds.first()`
+         * / `assigneeNames.first()` when the array variant is provided).
+         */
+        assigneeIds: List<String> = emptyList(),
+        assigneeNames: List<String> = emptyList(),
     ): TaskRecord
 
     /**
@@ -146,19 +155,51 @@ interface WorkforceDirectory {
         longitude: Double? = null,
         dueDate: Long? = null,
         assigneeName: String = "",
+        notifyAssignee: Boolean = true,
+        /** Multi-assignee — see [addTask]. Empty list keeps the legacy single-assignee shape. */
+        assigneeIds: List<String> = emptyList(),
+        assigneeNames: List<String> = emptyList(),
+    ): TaskRecord
+
+    /**
+     * Replace a task's assignee list (used by the user-side "Reassign" action
+     * on the InReview screen). Status is preserved by default; the new
+     * assignees' `tasksOpen` counters are incremented and the removed
+     * assignees' counters are decremented (only when the task is still open).
+     */
+    suspend fun reassignTask(
+        taskId: String,
+        adminId: String,
+        newAssigneeIds: List<String>,
+        newAssigneeNames: List<String>,
     ): TaskRecord
 
     /** Live stream of chat notes for a task (subcollection). Sorted ascending. */
     fun observeTaskNotes(taskId: String): Flow<List<TaskNote>>
 
-    /** Append a chat note. Returns the persisted record. */
+    /**
+     * Append a chat note. Returns the persisted record.
+     *
+     * For text-only notes pass [message] and leave [voiceUrl] null.
+     * For voice notes set [message] to "" (or a transcript later) and
+     * provide [voiceUrl] + [voiceDurationMs].
+     */
     suspend fun addTaskNote(
         taskId: String,
         authorId: String,
         authorName: String,
         role: String,           // "admin" | "user"
         message: String,
+        voiceUrl: String? = null,
+        voiceDurationMs: Long? = null,
     ): TaskNote
+
+    /**
+     * Upload a recorded audio file (local content:// URI on Android, file://
+     * path on iOS) to Firebase Storage and return its public download URL.
+     * Stored under `admins/{adminId}/voice-notes/<random>.m4a`.
+     */
+    suspend fun uploadVoiceNote(adminId: String, contentUri: String): String
 
     /**
      * Updates task status and keeps `tasksOpen` counter consistent.
@@ -223,6 +264,17 @@ interface WorkforceDirectory {
 
     /** Live stream of all inventory transactions (issues / returns / restocks). */
     fun observeInventoryTransactions(adminId: String): Flow<List<InventoryTransaction>>
+
+    /**
+     * Live stream of the monthly stock snapshot for [year]/[month] (1..12).
+     * Returns null while the snapshot doesn't exist yet (e.g. a brand-new
+     * admin's first month, or before the Cloud Function has run).
+     */
+    fun observeMonthlyStockSnapshot(
+        adminId: String,
+        year   : Int,
+        month  : Int,
+    ): Flow<MonthlyStockSnapshot?>
 
     suspend fun addInventoryTransaction(
         adminId: String,
@@ -446,16 +498,25 @@ data class EmployeeDraft(
 data class TaskRecord(
     val id: String,
     val adminId: String,
-    val userId: String?,            // assignedUserId in Firestore
+    val userId: String?,            // legacy assignedUserId in Firestore (kept = assignedUserIds[0] for back-compat)
     val title: String,
     val description: String = "",   // long-form details captured on the create-task screen
     val location: String,
     val time: String,
     val day: String,
     val priority: String,           // "Success" | "Medium" | "Danger"
-    val status: String,             // "Todo" | "InProgress" | "Done"
+    val status: String,             // "Todo" | "InProgress" | "InReview" | "Done"
     val assigneeInitials: String = "",
-    val assigneeName: String = "",
+    val assigneeName: String = "",  // legacy single-assignee display name (kept = assigneeNames[0])
+    /**
+     * Canonical multi-assignee fields (Phase F — multi-assignee rollout).
+     * Reads must merge these with the legacy [userId] / [assigneeName] via
+     * [allAssigneeIds] / [allAssigneeNames] so old tasks still resolve.
+     * Writes mirror to both shapes (legacy = first element) so older client
+     * builds keep working until they're upgraded.
+     */
+    val assignedUserIds: List<String> = emptyList(),
+    val assigneeNames: List<String> = emptyList(),
     val ownerAdminId: String = "",
     val ownerAdminName: String = "",
     val scheduledDateMs: Long? = null,
@@ -485,6 +546,21 @@ data class TaskRecord(
     val rca: String = "",                 // root cause analysis
     val totalWorkDurationMs: Long? = null, // endTime - acceptedAt (auto-calculated)
     val materialsUsed: List<MaterialUsedItem> = emptyList(), // inventory consumed
+    /**
+     * When false, suppress push notifications for any event on this task —
+     * "new assignment", checklist-tick, attachment-added, status flips, etc.
+     * Defaults to true so legacy tasks keep their current behaviour.
+     */
+    val notifyAssignee: Boolean = true,
+    /**
+     * Timestamps of every Done → !Done transition this task has gone through.
+     * Used by the monthly Reports to compute reopen-rate / quality-score
+     * without relying on a transient client-side listener.
+     *
+     * Legacy tasks have an empty list — they count as zero reopens until they
+     * see their first transition.
+     */
+    val reopens: List<Long> = emptyList(),
 )
 
 /** One line-item of material consumed during task completion. */
@@ -502,6 +578,11 @@ data class TaskNote(
     val role: String,               // "admin" | "user"
     val message: String,
     val createdAtMs: Long? = null,
+    /** Firebase Storage URL of the attached voice note (m4a / mp3). Null when
+     *  the note is text-only. Either [message] or [voiceUrl] must be present. */
+    val voiceUrl: String? = null,
+    /** Recorded duration in milliseconds — drives the playback UI's progress. */
+    val voiceDurationMs: Long? = null,
 )
 
 data class ChecklistItem(
@@ -517,6 +598,32 @@ data class InventoryRecord(
     val quantity: Int,
 )
 
+/**
+ * Phase 2 / Case 3 — monthly stock snapshot written by the
+ * `snapshotMonthlyStock` Cloud Function on the 1st of each month.
+ *
+ * Each snapshot represents both the CLOSING stock of the previous month and
+ * the OPENING stock of the new month. Used by the reports to compute
+ * "opening → closing" deltas without re-reading every transaction since
+ * the start of time.
+ */
+data class MonthlyStockSnapshot(
+    val year      : Int,
+    val month     : Int,                    // 1..12
+    val items     : List<SnapshotItem>,
+    val totalQty  : Int,
+    val totalValue: Double,
+    val snapshotAtMs: Long? = null,
+)
+
+data class SnapshotItem(
+    val itemId  : String,
+    val name    : String,
+    val stockQty: Int,
+    val price   : Double,
+    val value   : Double,
+)
+
 data class InventoryTransaction(
     val id: String,
     val adminId: String,
@@ -526,6 +633,12 @@ data class InventoryTransaction(
     val type: String,               // "issue" | "return" | "restock"
     val quantity: Int,
     val createdAt: Long? = null,
+    /**
+     * Linkage to the [TaskRecord.id] that triggered this transaction.
+     * Null for manual stock corrections / out-of-task issuance. Reports
+     * uses this to split consumption into "from tasks" vs "manual".
+     */
+    val taskId: String? = null,
 )
 
 data class AttendanceRecord(
@@ -585,6 +698,13 @@ data class SpareItemRecord(
     val vendorContact2: String = "",
     val vendorAddress2: String = "",
     val vendorLocation: String = "",
+    // ── Categorization: optional mapping to admin's department / equipment ──
+    // Used by the user task-completion screen to show only relevant spares for
+    // the task's department + equipment. Empty string means "unassigned".
+    val departmentId: String = "",
+    val departmentName: String = "",
+    val equipmentId: String = "",
+    val equipmentName: String = "",
     val createdAt: Long? = null,
     val updatedAt: Long? = null,
 )
@@ -623,3 +743,31 @@ data class LeaveRecord(
     val updatedAtMs: Long? = null,
 )
 
+/**
+ * Merge the new multi-assignee arrays with the legacy single-assignee field
+ * so callers can treat any [TaskRecord] uniformly. Order preserved; the
+ * legacy [TaskRecord.userId] is appended only when it isn't already in the
+ * array (guarding the back-compat mirror written by [addTask] / [updateTask]).
+ */
+fun TaskRecord.allAssigneeIds(): List<String> {
+    val legacy = userId?.takeIf { it.isNotBlank() }
+    return if (legacy == null || legacy in assignedUserIds) {
+        assignedUserIds
+    } else {
+        assignedUserIds + legacy
+    }
+}
+
+/** Parallel array to [allAssigneeIds] — preserves alignment when both are non-empty. */
+fun TaskRecord.allAssigneeNames(): List<String> {
+    val legacy = assigneeName.takeIf { it.isNotBlank() }
+    return when {
+        assigneeNames.isNotEmpty() -> assigneeNames
+        legacy != null             -> listOf(legacy)
+        else                       -> emptyList()
+    }
+}
+
+/** True iff the given uid is among the task's assignees (legacy or array). */
+fun TaskRecord.isAssignedTo(uid: String): Boolean =
+    uid.isNotBlank() && (uid == userId || uid in assignedUserIds)

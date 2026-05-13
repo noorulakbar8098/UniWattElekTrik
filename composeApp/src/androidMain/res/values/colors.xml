@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Brand blue used as window background during cold-start -->
-    <color name="splash_bg">#2979FF</color>
+    <!-- Header surface (AppTheme.Ink900) used as window background during
+         cold-start so the native splash and the Compose SplashScreen share
+         the same colour — no visible "two-splash" flash. -->
+    <color name="splash_bg">#0D1B3E</color>
 
     <!-- Tint for FCM "notification" payload (small icon background) -->
     <color name="uw_notification_accent">#2979FF</color>

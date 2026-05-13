@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!--
+        Shared scope for outgoing files (e.g. exported CSV reports).
+        Maps to context.cacheDir/shared/ — short-lived, OS may evict.
+    -->
+    <cache-path name="shared" path="shared/" />
+    <!--
+        Voice notes recorded via MediaRecorder. Stored under
+        context.cacheDir/voice-notes/ before being uploaded to Cloudinary.
+    -->
+    <cache-path name="voice-notes" path="voice-notes/" />
+</paths>

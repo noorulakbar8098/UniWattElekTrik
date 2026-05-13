@@ -1,6 +1,8 @@
 package com.example.uniwattelektrik.feature.user.presentation.screens
 
+import com.example.uniwattelektrik.core.components.ToastController
 import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+import com.example.uniwattelektrik.platform.nowEpochMillis
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -94,7 +96,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.uniwattelektrik.core.components.PremiumHeaderBackground
+import com.example.uniwattelektrik.core.components.OperationsHeader
 import com.example.uniwattelektrik.core.media.rememberPhotoPicker
 import com.example.uniwattelektrik.core.theme.AppShapes
 import com.example.uniwattelektrik.core.theme.AppTheme
@@ -105,6 +107,8 @@ import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 private val ScreenBg     = AppTheme.Bg
@@ -154,19 +158,39 @@ fun CompleteWorkScreen(
     val task      = allTasks.firstOrNull { it.id == taskId }
 
     // ── #1 Department / equipment filter ─────────────────────────────────────
-    // Show ONLY spare items present in the inventory (stockQty > 0) whose
-    // category matches the task's department or equipment. No fallback —
-    // if nothing matches, the list is empty.
-    val filteredSpares = remember(allSpares, task?.departmentName, task?.equipmentName) {
-        val dept  = task?.departmentName?.lowercase().orEmpty().trim()
-        val equip = task?.equipmentName?.lowercase().orEmpty().trim()
+    // Show ONLY spare items mapped to the same department + equipment as the
+    // task. We match by id first (authoritative) and fall back to name match
+    // for legacy spares saved before the categorization fields existed.
+    // If the task has no department/equipment set, show everything in stock.
+    val filteredSpares = remember(
+        allSpares,
+        task?.departmentId, task?.departmentName,
+        task?.equipmentId,  task?.equipmentName,
+    ) {
+        val tDeptId   = task?.departmentId.orEmpty()
+        val tDeptName = task?.departmentName.orEmpty().trim()
+        val tEqId     = task?.equipmentId.orEmpty()
+        val tEqName   = task?.equipmentName.orEmpty().trim()
         val inStock = allSpares.filter { it.stockQty > 0 }
-        if (dept.isEmpty() && equip.isEmpty()) inStock
-        else inStock.filter { spare ->
-            val cat = spare.category.lowercase().trim()
-            if (cat.isEmpty()) false
-            else (dept.isNotEmpty() && (cat.contains(dept) || dept.contains(cat))) ||
-                 (equip.isNotEmpty() && (cat.contains(equip) || equip.contains(cat)))
+        if (tDeptId.isEmpty() && tDeptName.isEmpty() &&
+            tEqId.isEmpty()   && tEqName.isEmpty()) {
+            inStock
+        } else inStock.filter { spare ->
+            val deptOk = when {
+                tDeptId.isNotEmpty() && spare.departmentId.isNotEmpty() ->
+                    spare.departmentId == tDeptId
+                tDeptName.isNotEmpty() && spare.departmentName.isNotEmpty() ->
+                    spare.departmentName.equals(tDeptName, ignoreCase = true)
+                else -> true   // task has no dept OR spare unassigned → don't filter on dept
+            }
+            val equipOk = when {
+                tEqId.isNotEmpty() && spare.equipmentId.isNotEmpty() ->
+                    spare.equipmentId == tEqId
+                tEqName.isNotEmpty() && spare.equipmentName.isNotEmpty() ->
+                    spare.equipmentName.equals(tEqName, ignoreCase = true)
+                else -> true
+            }
+            deptOk && equipOk
         }
     }
 
@@ -183,7 +207,7 @@ fun CompleteWorkScreen(
     var submitting   by remember { mutableStateOf(false) }
     var submitError  by remember { mutableStateOf<String?>(null) }
     val scope        = rememberCoroutineScope()
-    val endTimeMs    = remember { System.currentTimeMillis() }
+    val endTimeMs    = remember { nowEpochMillis() }
 
     // ── #11 Live remaining stock (UI state) ───────────────────────────────────
     // When a user increments qty, show reduced remaining stock on the card.
@@ -231,6 +255,23 @@ fun CompleteWorkScreen(
                     val used = rows.filter { it.qty > 0 }
                         .map { MaterialUsedItem(it.spare.id, it.spare.name, it.qty) }
                     scope.launch {
+                        // ── Upload the signoff photo (if any) and append the
+                        // resulting URL to the task's existing attachments so
+                        // it shows up on the Task Detail screen for both the
+                        // assignee and the admin. Upload failure is non-fatal
+                        // — we still submit the signoff.
+                        val photoLocal = photoUri
+                        if (!photoLocal.isNullOrBlank()) {
+                            val uploadedUrl = suspendCancellableCoroutine<String?> { cont ->
+                                workforceVm.uploadAttachment(adminId, photoLocal) { res ->
+                                    cont.resume(res.getOrNull())
+                                }
+                            }
+                            if (!uploadedUrl.isNullOrBlank()) {
+                                val merged = (task.attachments + uploadedUrl).distinct()
+                                workforceVm.updateAttachments(taskId, merged)
+                            }
+                        }
                         workforceVm.completeTaskWithSignoff(
                             adminId            = adminId,
                             taskId             = taskId,
@@ -244,8 +285,20 @@ fun CompleteWorkScreen(
                         ) { result ->
                             submitting = false
                             result.fold(
-                                onSuccess = { step = 2 },
-                                onFailure = { submitError = it.message ?: "Submission failed" },
+                                onSuccess = {
+                                    step = 2
+                                    ToastController.success(
+                                        title = "Task completed",
+                                        body  = task.title.ifBlank { "Sign-off submitted" },
+                                    )
+                                },
+                                onFailure = {
+                                    submitError = it.message ?: "Submission failed"
+                                    ToastController.error(
+                                        title = "Couldn't submit work",
+                                        body  = it.message ?: "Please check your connection and try again",
+                                    )
+                                },
                             )
                         }
                     }
@@ -536,11 +589,11 @@ private fun SignoffStep(
 ) {
     // ── #5 Live ticking duration ───────────────────────────────────────────────
     var elapsedMs by remember { mutableLongStateOf(
-        System.currentTimeMillis() - (task?.acceptedAt ?: System.currentTimeMillis())
+        nowEpochMillis() - (task?.acceptedAt ?: nowEpochMillis())
     )}
     LaunchedEffect(task?.acceptedAt) {
         val start = task?.acceptedAt ?: return@LaunchedEffect
-        while (true) { elapsedMs = System.currentTimeMillis() - start; delay(1000L) }
+        while (true) { elapsedMs = nowEpochMillis() - start; delay(1000L) }
     }
     val h = elapsedMs / 3_600_000
     val m = (elapsedMs % 3_600_000) / 60_000
@@ -549,6 +602,11 @@ private fun SignoffStep(
 
     // ── #7 Photo picker ─────────────────────────────────────────────────────
     val photoPicker = rememberPhotoPicker()
+
+    // Captured-but-not-yet-confirmed photo. The picker writes its URI here
+    // first; the overlay below lets the technician annotate (or skip) before
+    // the flattened JPEG flows into onPhotoChange.
+    var pendingAnnotationUri by remember { mutableStateOf<String?>(null) }
 
     // Derived summary for #2
     val selectedMaterials = rows.filter { it.qty > 0 }
@@ -668,9 +726,10 @@ private fun SignoffStep(
                                 .clickable { onPhotoChange(null) })
                     }
                 }
-                // Sync picker result
+                // Sync picker result — route through the annotator overlay so
+                // the user can mark up defects before the URI is committed.
                 LaunchedEffect(photoPicker.uri) {
-                    photoPicker.uri?.let { onPhotoChange(it) }
+                    photoPicker.uri?.let { pendingAnnotationUri = it }
                 }
             }
 
@@ -795,6 +854,19 @@ private fun SignoffStep(
                 }
             }
         }
+    }
+
+    // Photo annotation overlay — full-screen, takes the picker URI, returns
+    // the flattened annotated JPEG URI to onPhotoChange. Cancel discards.
+    pendingAnnotationUri?.let { uri ->
+        com.example.uniwattelektrik.core.components.PhotoAnnotatorOverlay(
+            sourceUri = uri,
+            onCancel  = { pendingAnnotationUri = null },
+            onDone    = { annotated ->
+                pendingAnnotationUri = null
+                onPhotoChange(annotated)
+            },
+        )
     }
 }
 
@@ -1371,64 +1443,32 @@ private fun StepHeader(title: String, subtitle: String, taskTitle: String?, step
         label         = "stepProgress",
     )
 
-    PremiumHeaderBackground(roundedBottom = true, cornerRadius = 24.dp) {
-        Column(
-            modifier = Modifier
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = AppTheme.SpLg)
-                .padding(top = AppTheme.SpSm, bottom = AppTheme.SpLg),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.18f))
-                        .clickable(onClick = onBack),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint               = Color.White,
-                        modifier           = Modifier.size(20.dp),
-                    )
-                }
-                Spacer(Modifier.width(AppTheme.SpSm))
+    OperationsHeader(
+        eyebrow  = "TASK COMPLETION",
+        title    = title,
+        onBack   = onBack,
+        actions  = {
+            Box(
+                modifier = Modifier
+                    .clip(AppShapes.pill)
+                    .background(Color.White.copy(alpha = 0.10f))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+            ) {
                 Text(
-                    "TASK COMPLETION",
-                    style = AppTypography.labelSmall.copy(
-                        color         = Color.White.copy(alpha = 0.70f),
-                        letterSpacing = 1.8.sp,
+                    subtitle,
+                    style = AppTypography.captionLarge.copy(
+                        color      = Color.White,
+                        fontWeight = FontWeight.SemiBold,
                     ),
                 )
-                Spacer(Modifier.weight(1f))
-                Box(
-                    modifier = Modifier
-                        .clip(AppShapes.pill)
-                        .background(Color.White.copy(alpha = 0.18f))
-                        .padding(horizontal = AppTheme.SpSm, vertical = 5.dp),
-                ) {
-                    Text(
-                        subtitle,
-                        style = AppTypography.captionLarge.copy(
-                            color      = Color.White,
-                            fontWeight = FontWeight.SemiBold,
-                        ),
-                    )
-                }
             }
-            Spacer(Modifier.height(AppTheme.SpMd))
-            Text(
-                title,
-                style = AppTypography.displayMedium.copy(color = Color.White),
-            )
+        },
+        extras = {
             if (!taskTitle.isNullOrBlank()) {
-                Spacer(Modifier.height(AppTheme.SpXs))
                 Row(
                     modifier = Modifier
                         .clip(AppShapes.pill)
-                        .background(Color.White.copy(alpha = 0.16f))
+                        .background(Color.White.copy(alpha = 0.10f))
                         .padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment     = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1449,8 +1489,8 @@ private fun StepHeader(title: String, subtitle: String, taskTitle: String?, step
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                Spacer(Modifier.height(AppTheme.SpMd))
             }
-            Spacer(Modifier.height(AppTheme.SpMd))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 BoxWithConstraints(
                     modifier = Modifier
@@ -1480,8 +1520,8 @@ private fun StepHeader(title: String, subtitle: String, taskTitle: String?, step
                     color      = Color.White,
                 )
             }
-        }
-    }
+        },
+    )
 }
 
 @Composable

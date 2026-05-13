@@ -36,6 +36,11 @@ data class SampleTask(
     val priority: TaskPriority,
     val status: TaskStatus,
     val assigneeInitials: String,
+    // Geocoded coordinates of the site (null when the address wasn't
+    // resolved at creation time). Used by Task Detail to deep-link into
+    // Google / Apple Maps.
+    val latitude: Double? = null,
+    val longitude: Double? = null,
 )
 
 object SampleTasks {

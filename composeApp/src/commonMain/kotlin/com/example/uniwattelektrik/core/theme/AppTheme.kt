@@ -83,12 +83,17 @@ object AppTheme {
     val PriorityHigh   = Danger;   val PriorityHighBg   = DangerBg
     val PriorityUrgent = Color(0xFF7C3AED); val PriorityUrgentBg = Color(0xFFEDE9FE)
 
-    // ─── Shadows — neutral only, no coloured glows ───────────────────────
-    val ShadowSm     = Color(0x0A000000)   // 4 %  — very subtle
-    val ShadowMd     = Color(0x0F000000)   // 6 %  — standard card
-    val ShadowLg     = Color(0x18000000)   // 10 % — elevated modal
+    // ─── Shadows — blue-tinted Ink900 for premium "ambient light" feel ──
+    // Tinting shadows toward the brand's dark navy (instead of pure black)
+    // makes elevated surfaces look like they're floating above an
+    // atmospherically-lit surface rather than sitting on a flat page. The
+    // alpha values are unchanged so the perceived elevation is identical to
+    // the previous neutral-black system.
+    val ShadowSm     = Color(0x0A0D1B3E)   // 4 %  — very subtle
+    val ShadowMd     = Color(0x0F0D1B3E)   // 6 %  — standard card
+    val ShadowLg     = Color(0x180D1B3E)   // 10 % — elevated modal
     // Keep this for backward compatibility with BottomNavBar FAB
-    val ShadowSpotBlue = Color(0x200D1B3E) // neutral dark, no blue tint
+    val ShadowSpotBlue = Color(0x200D1B3E)
 
     // ─── Shape radii ─────────────────────────────────────────────────────
     val RadiusXs = 6.dp

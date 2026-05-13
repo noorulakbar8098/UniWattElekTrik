@@ -10,7 +10,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,26 +48,16 @@ fun App() {
     val viewModel = remember { AppContainer.createAuthViewModel() }
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    // Hold the splash until either: the minimum splash duration has passed
-    // AND the auth state has resolved (Verified or Idle), OR the user is
-    // already known. This eliminates the previous Login-screen flash on
-    // app relaunch when a session exists.
-    var splashMinElapsed by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(900L)   // brief brand moment, not 2 s
-        splashMinElapsed = true
-    }
-
-    val showSplash = state is AuthUiState.Bootstrapping || !splashMinElapsed
-    if (showSplash) {
-        // Solid brand-blue bridge that matches the Android system splash.
-        // The OS already showed the launcher icon on this exact background;
-        // we just hold it for a few hundred ms until auth resolves so the
-        // user perceives a single, continuous splash moment.
+    // No Compose splash. The native Android 12+ system splash
+    // (windowSplashScreenBackground = @color/splash_bg = #0D1B3E + adaptive
+    // icon) is the *only* splash. We just hold an invisible Ink900 frame
+    // while auth bootstrap is resolving so the Login screen doesn't flash
+    // for signed-in users on cold start.
+    if (state is AuthUiState.Bootstrapping) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF2979FF)),
+                .background(Color(0xFF0D1B3E)),
         )
         return
     }

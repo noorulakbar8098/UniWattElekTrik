@@ -63,6 +63,13 @@ data class SpareItem(
     val vendorContact2: String = "",
     val vendorAddress2: String = "",
     val vendorLocation: String = "",
+    // ── Categorization: which department / equipment this spare belongs to ──
+    val departmentId: String = "",
+    val departmentName: String = "",
+    val equipmentId: String = "",
+    val equipmentName: String = "",
+    /** Firestore creation timestamp — used for newest-first sorting in lists. */
+    val createdAtMs: Long? = null,
 )
 
 val sampleDepartments = listOf(

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Android 12+ system splash. The platform paints `windowSplashScreenBackground`
+        full-screen and centres `windowSplashScreenAnimatedIcon` on top, which
+        eliminates the "blue-only / no-logo" first splash. We point the icon at
+        the adaptive-icon foreground (UW + lightning, transparent) so it shows
+        seamlessly before the Compose SplashScreen takes over.
+    -->
+    <style name="Theme.UniWatt.Splash" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/splash_bg</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="android:statusBarColor">@color/splash_bg</item>
+        <item name="android:navigationBarColor">@color/splash_bg</item>
+    </style>
+</resources>

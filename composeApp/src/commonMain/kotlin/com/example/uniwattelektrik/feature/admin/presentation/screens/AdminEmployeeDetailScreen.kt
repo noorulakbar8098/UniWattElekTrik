@@ -82,6 +82,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.uniwattelektrik.feature.workforce.data.remote.AttendanceRecord
 import com.example.uniwattelektrik.feature.workforce.data.remote.EmployeeRecord
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
+import com.example.uniwattelektrik.feature.workforce.data.remote.isAssignedTo
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
 import com.example.uniwattelektrik.platform.nowEpochMillis
 import kotlin.math.absoluteValue
@@ -142,8 +143,16 @@ fun AdminEmployeeDetailScreen(
     com.example.uniwattelektrik.core.theme.SetStatusBar(color = Brand, darkIcons = false)
 
     val employee = employees.firstOrNull { it.id == employeeId }
-    val myTasks  = tasks.filter { it.userId == employeeId }
+    val myTasks  = tasks.filter { it.isAssignedTo(employeeId) }
     var tab      by remember { mutableStateOf("Overview") }
+
+    // Suspend confirmation dialog state — gated behind a destructive
+    // DsConfirmDialog so admins can't accidentally cut off access.
+    var showSuspendDialog by remember { mutableStateOf(false) }
+
+    // Hoist the URI opener up to the outer composable scope so it can be
+    // captured by the (non-Composable) LazyListScope lambdas below.
+    val openUri = com.example.uniwattelektrik.core.platform.rememberUriOpener()
 
     if (employee == null) {
         Box(
@@ -270,12 +279,22 @@ fun AdminEmployeeDetailScreen(
 
         // ── Overview tab content ────────────────────────────────────────────
         if (tab == "Overview") {
-            // Quick actions
+            // Quick actions — `openUri` is hoisted at the top of the screen
+            // so it's available inside this non-Composable LazyListScope block.
             item {
                 Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                     QuickActions(
                         onMessage = {},
-                        onCall    = {},
+                        onCall    = {
+                            val phone = employee.phone.takeIf { it.isNotBlank() }
+                            if (phone != null) {
+                                openUri(com.example.uniwattelektrik.core.platform.buildTelUri(phone))
+                            } else {
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("No phone number on file for ${employee.name}")
+                                }
+                            }
+                        },
                         onLocate  = {},
                     )
                 }
@@ -404,14 +423,7 @@ fun AdminEmployeeDetailScreen(
                     bg = Color(0xFFFEE2E2),
                     modifier = Modifier.weight(1f),
                     labelColor = Danger,
-                    onClick = {
-                        workforceVm.updateEmployeeStatus(
-                            adminId    = adminUid,
-                            employeeId = employee.id,
-                            status     = "Relieved",
-                        )
-                        onBack()
-                    },
+                    onClick = { showSuspendDialog = true },
                 )
             }
         }
@@ -422,6 +434,41 @@ fun AdminEmployeeDetailScreen(
         modifier  = Modifier.align(Alignment.BottomCenter),
     )
     } // end outer Box
+
+    // ── Suspend access? confirm dialog ─────────────────────────────────────
+    val activeForDialog = activeTaskCount
+    com.example.uniwattelektrik.core.components.DsConfirmDialog(
+        visible      = showSuspendDialog,
+        title        = "Suspend access?",
+        subject      = employee.name,
+        body         = buildString {
+            append("will lose access to the app immediately. ")
+            if (activeForDialog > 0) {
+                append("This action will reassign $activeForDialog active task")
+                if (activeForDialog != 1) append("s")
+                append(". ")
+            }
+            append("You can restore access later.")
+        },
+        confirmLabel = "Yes, suspend now",
+        cancelLabel  = "Cancel",
+        kind         = com.example.uniwattelektrik.core.components.DsConfirmKind.Destructive,
+        icon         = Icons.Filled.Block,
+        onConfirm    = {
+            workforceVm.updateEmployeeStatus(
+                adminId    = adminUid,
+                employeeId = employee.id,
+                status     = "Suspended",
+            )
+            com.example.uniwattelektrik.core.components.ToastController.error(
+                title = "Access suspended",
+                body  = "${employee.name} can no longer sign in.",
+            )
+            showSuspendDialog = false
+            onBack()
+        },
+        onDismiss    = { showSuspendDialog = false },
+    )
 }
 
 /* ─────────────────────────────────────────────────────────────────────── *
@@ -435,15 +482,10 @@ private fun ProfileHeader(
     onEditPhoto: () -> Unit = {},
     onEditEmployee: () -> Unit = {},
 ) {
-    com.example.uniwattelektrik.core.components.PremiumHeaderBackground(
-        roundedBottom = false,
+    com.example.uniwattelektrik.core.components.OperationsHeaderSurface(
+        horizontalPadding = 18.dp,
+        bottomPadding     = 60.dp,
     ) {
-        Column(
-            modifier = Modifier
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 18.dp)
-                .padding(top = 14.dp, bottom = 60.dp),
-        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 com.example.uniwattelektrik.core.components.GlassBackButton(
                     onClick = onBack,
@@ -452,16 +494,18 @@ private fun ProfileHeader(
                 Text(
                     "Employee Profile",
                     color = Color.White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontSize = 24.sp,           // canonical header title size
+                    fontWeight = FontWeight.ExtraBold,
                     modifier = Modifier.weight(1f),
                 )
-                GlassButton(onClick = {}) {
+                // Edit chip — opens the AddEmployeeSheet pre-filled with this
+                // employee's record (admin-side full edit).
+                GlassButton(onClick = onEditEmployee) {
                     Icon(
-                        imageVector = Icons.Filled.MoreVert,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp),
+                        imageVector        = Icons.Filled.Edit,
+                        contentDescription = "Edit employee",
+                        tint               = Color.White,
+                        modifier           = Modifier.size(18.dp),
                     )
                 }
             }
@@ -560,44 +604,17 @@ private fun ProfileHeader(
                     )
 
                     Spacer(Modifier.height(10.dp))
-                    /* EMP-XXXX · STATUS pill */
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(Color.White.copy(alpha = 0.18f))
-                            .border(1.dp, Color.White.copy(alpha = 0.25f),
-                                    RoundedCornerShape(50))
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            shortEmpCode(employee.id),
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.2.sp,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            "•",
-                            color = Color.White.copy(alpha = 0.6f),
-                            fontSize = 11.sp,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            employee.status.uppercase().replace("ONLEAVE", "ON-LEAVE")
-                                .ifBlank { "ON-SITE" },
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.2.sp,
-                        )
-                    }
+                    /* EMP-XXXX · STATUS pill — consolidated via DsGlassChip */
+                    com.example.uniwattelektrik.core.components.DsGlassChip(
+                        label    = shortEmpCode(employee.id),
+                        trailing = employee.status.uppercase()
+                            .replace("ONLEAVE", "ON-LEAVE")
+                            .ifBlank { "ON-SITE" },
+                    )
                 }
             }
         }
     }
-}
 
 @Composable
 private fun GlassButton(onClick: () -> Unit, content: @Composable () -> Unit) {
@@ -640,7 +657,7 @@ private fun StatsCard(
                  valueColor = Success, percentSuffix = true,
                  modifier = Modifier.weight(1f))
         VerticalDivider()
-        StatItem(value = "${"%.1f".format(rating)}★", label = "RATING",
+        StatItem(value = "${fmt1(rating)}★", label = "RATING",
                  valueColor = InkPrimary, modifier = Modifier.weight(1f))
         VerticalDivider()
         StatItem(value = "$attendance%", label = "ATTEND.",
@@ -1712,3 +1729,15 @@ private fun yearsSince(epochMs: Long): String {
     val tenths = (months * 10 / 12)
     return if (years > 0) "$years.$tenths years" else "$months months"
 }
+
+/**
+ * KMP-friendly one-decimal formatter. JVM-only `String.format` is unavailable
+ * in Kotlin/Native, so we round half-away-from-zero with common stdlib math.
+ */
+private fun fmt1(value: Double): String {
+    val scaled = kotlin.math.round(value * 10.0).toLong()
+    val sign   = if (scaled < 0) "-" else ""
+    val abs    = kotlin.math.abs(scaled)
+    return "$sign${abs / 10}.${abs % 10}"
+}
+

@@ -38,6 +38,7 @@ import com.example.uniwattelektrik.di.AppContainer
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
 import com.example.uniwattelektrik.core.components.AppBottomNavBar
 import com.example.uniwattelektrik.core.components.BottomNavItem
+import com.example.uniwattelektrik.core.components.ToastHost
 import com.example.uniwattelektrik.core.navigation.UserNavigator
 import com.example.uniwattelektrik.core.navigation.UserRoute
 import com.example.uniwattelektrik.core.navigation.rememberUserNavigator
@@ -97,12 +98,21 @@ fun UserShell(
     // When a notification tap on Android publishes a route key into
     // [DeepLinkBus], jump to the matching tab. Unknown keys are ignored
     // (e.g. "inventory" — handled by AdminShell instead).
+    //
+    // If the deep-link also carries a [DeepLinkBus.taskId] (e.g. a note was
+    // added on a specific task), we land on the Tasks tab AND push the task
+    // detail screen on top so the user sees the update immediately.
     val deepLink by com.example.uniwattelektrik.core.notification.DeepLinkBus.route
         .collectAsStateWithLifecycle()
-    LaunchedEffect(deepLink) {
+    val deepLinkTaskId by com.example.uniwattelektrik.core.notification.DeepLinkBus.taskId
+        .collectAsStateWithLifecycle()
+    LaunchedEffect(deepLink, deepLinkTaskId) {
         when (deepLink) {
             "home"    -> nav.selectTab(UserRoute.Home)
-            "tasks"   -> nav.selectTab(UserRoute.Tasks)
+            "tasks"   -> {
+                nav.selectTab(UserRoute.Tasks)
+                deepLinkTaskId?.let { nav.navigate(UserRoute.TaskDetail(it)) }
+            }
             "leave"   -> nav.selectTab(UserRoute.Leave)
             "livemap" -> nav.selectTab(UserRoute.LiveMap)
             "profile" -> nav.selectTab(UserRoute.Profile)
@@ -167,6 +177,7 @@ fun UserShell(
                 adminId      = user.parentAdminId ?: "",
                 employeeName = user.displayName?.takeIf { it.isNotBlank() } ?: user.email,
                 department   = "",
+                onBack       = { nav.selectTab(UserRoute.Home) },
             ) }
             UserRoute.Profile -> saveableHolder.SaveableStateProvider("profile") { ProfileScreen(
                 user            = user,
@@ -237,6 +248,9 @@ fun UserShell(
                 modifier    = Modifier.align(Alignment.BottomCenter),
             )
         }
+
+        // ── Global toast host (top of screen) ──────────────────────────────
+        ToastHost(modifier = Modifier.align(Alignment.TopCenter))
 
         // ── Offline error banner ───────────────────────────────────────────
         AnimatedVisibility(

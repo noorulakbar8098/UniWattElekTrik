@@ -51,6 +51,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,12 +74,13 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.uniwattelektrik.core.components.AppPullToRefresh
 import com.example.uniwattelektrik.core.components.DsAvatarBubble
+import com.example.uniwattelektrik.core.components.DsAvatarStack
 import com.example.uniwattelektrik.core.components.DsEmptyState
 import com.example.uniwattelektrik.core.components.DsPriorityChip
 import com.example.uniwattelektrik.core.components.DsProgressBar
 import com.example.uniwattelektrik.core.components.DsStatusChip
-import com.example.uniwattelektrik.core.components.PremiumHeaderBackground
-import com.example.uniwattelektrik.core.components.PremiumHeaderStatusBarColor
+import com.example.uniwattelektrik.core.components.OperationsHeader
+import com.example.uniwattelektrik.core.components.OperationsHeaderStatusBarColor
 import com.example.uniwattelektrik.core.theme.AppElevation
 import com.example.uniwattelektrik.core.theme.AppShapes
 import com.example.uniwattelektrik.core.theme.AppTheme
@@ -86,6 +88,7 @@ import com.example.uniwattelektrik.core.theme.AppTypography
 import com.example.uniwattelektrik.core.theme.SetStatusBar
 import com.example.uniwattelektrik.core.theme.appScreenBackground
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
+import com.example.uniwattelektrik.feature.workforce.data.remote.allAssigneeNames
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
 import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
@@ -218,6 +221,13 @@ fun AdminTasksScreen(
     onTaskClick : (taskId: String) -> Unit = {},
     onEditTask  : (taskId: String) -> Unit = {},
     modifier    : Modifier = Modifier,
+    /**
+     * Status key of the workflow tab to focus on first composition (one of
+     * "Todo", "InProgress", "Review", "Done"). Null = leave default.
+     */
+    initialTabKey: String? = null,
+    /** Invoked after [initialTabKey] has been honoured so callers can clear it. */
+    onInitialTabConsumed: () -> Unit = {},
 ) {
     TrackScreenPerformance("AdminTasksScreen")
     val allTasks by workforceVm.tasks.collectAsStateWithLifecycle()
@@ -262,7 +272,18 @@ fun AdminTasksScreen(
     val pagerState = rememberPagerState { WorkflowTab.entries.size }
     val scope      = rememberCoroutineScope()
 
-    SetStatusBar(color = PremiumHeaderStatusBarColor, darkIcons = false)
+    // Apply caller-requested initial tab once, then clear so it doesn't
+    // override manual swipes on every recomposition.
+    LaunchedEffect(initialTabKey) {
+        val key = initialTabKey ?: return@LaunchedEffect
+        val idx = WorkflowTab.entries.indexOfFirst { it.statusKey.equals(key, ignoreCase = true) }
+        if (idx >= 0 && idx != pagerState.currentPage) {
+            pagerState.scrollToPage(idx)
+        }
+        onInitialTabConsumed()
+    }
+
+    SetStatusBar(color = OperationsHeaderStatusBarColor, darkIcons = false)
 
     Box(modifier = modifier.fillMaxSize().background(appScreenBackground())) {
 
@@ -356,48 +377,27 @@ fun AdminTasksScreen(
 
 @Composable
 private fun TasksScreenHeader(activeCount: Int, doneCount: Int) {
-    PremiumHeaderBackground(roundedBottom = true, cornerRadius = 24.dp) {
-        Column(
-            modifier = Modifier
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = AppTheme.SpLg, vertical = AppTheme.SpLg),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    OperationsHeader(
+        eyebrow  = "TASK BOARD",
+        title    = "Task Management",
+        subtitle = "$activeCount active · $doneCount completed",
+        actions  = {
+            Box(
+                modifier = Modifier
+                    .clip(AppShapes.pill)
+                    .background(Color.White.copy(alpha = 0.10f))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+            ) {
                 Text(
-                    "TASK BOARD",
-                    style = AppTypography.labelSmall.copy(
-                        color         = Color.White.copy(alpha = 0.70f),
-                        letterSpacing = 1.8.sp,
+                    "$activeCount active",
+                    style = AppTypography.captionLarge.copy(
+                        color      = Color.White,
+                        fontWeight = FontWeight.SemiBold,
                     ),
                 )
-                Spacer(Modifier.weight(1f))
-                Box(
-                    modifier = Modifier
-                        .clip(AppShapes.pill)
-                        .background(Color.White.copy(alpha = 0.18f))
-                        .padding(horizontal = AppTheme.SpSm, vertical = 5.dp),
-                ) {
-                    Text(
-                        "$activeCount active",
-                        style = AppTypography.captionLarge.copy(
-                            color      = Color.White,
-                            fontWeight = FontWeight.SemiBold,
-                        ),
-                    )
-                }
             }
-            Spacer(Modifier.height(AppTheme.SpMd))
-            Text(
-                "Task Management",
-                style = AppTypography.displayMedium.copy(color = Color.White),
-            )
-            Spacer(Modifier.height(AppTheme.SpXs))
-            Text(
-                "$activeCount active · $doneCount completed",
-                style = AppTypography.bodyMedium.copy(color = Color.White.copy(alpha = 0.80f)),
-            )
-        }
-    }
+        },
+    )
 }
 
 /* ─── Tab row ────────────────────────────────────────────────────────────── */
@@ -848,8 +848,13 @@ private fun AdminWorkflowCard(
 ) {
     val accent      = priorityAccent(task.priority)
     val priorityLbl = priorityLabel(task.priority)
-    val displayName = task.assigneeName.takeIf { it.isNotBlank() } ?: "Unassigned"
-    val avatarLetters = deriveAvatarLetters(task)
+    val assigneeNames = task.allAssigneeNames()
+    val displayName = when {
+        assigneeNames.isEmpty() -> "Unassigned"
+        assigneeNames.size == 1 -> assigneeNames.first()
+        else -> "${assigneeNames.first()} +${assigneeNames.size - 1}"
+    }
+    val avatarInitialsList = deriveAvatarLettersList(task)
 
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -1018,7 +1023,18 @@ private fun AdminWorkflowCard(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier          = Modifier.fillMaxWidth(),
                 ) {
-                    DsAvatarBubble(initials = avatarLetters, size = AppTheme.AvatarMd)
+                    if (avatarInitialsList.size <= 1) {
+                        DsAvatarBubble(
+                            initials = avatarInitialsList.firstOrNull() ?: "?",
+                            size     = AppTheme.AvatarMd,
+                        )
+                    } else {
+                        DsAvatarStack(
+                            initialsList = avatarInitialsList,
+                            size         = AppTheme.AvatarMd,
+                            maxVisible   = 3,
+                        )
+                    }
                     Spacer(Modifier.width(AppTheme.SpSm))
                     Text(
                         displayName,
@@ -1063,10 +1079,10 @@ private fun TaskActionMenu(
             }
             "InProgress" -> {
                 ActionItem("⏸  Pause Task")       { onStatusChange("Todo") }
-                ActionItem("🔍  Send for Review") { onStatusChange("Review") }
+                ActionItem("🔍  Send for Review") { onStatusChange("InReview") }
                 ActionItem("✅  Mark Complete")   { onStatusChange("Done") }
             }
-            "Review" -> {
+            "InReview" -> {
                 ActionItem("✅  Approve & Complete") { onStatusChange("Done") }
                 ActionItem("↩  Return to Progress")  { onStatusChange("InProgress") }
             }
@@ -1116,7 +1132,7 @@ private fun priorityLabel(raw: String): String = when (raw.lowercase()) {
 private fun statusLabel(status: String): String = when (status) {
     "Todo"       -> "PENDING"
     "InProgress" -> "IN PROGRESS"
-    "Review"     -> "REVIEW"
+    "InReview"   -> "REVIEW"
     "Done"       -> "DONE"
     else         -> status.uppercase()
 }
@@ -1124,7 +1140,7 @@ private fun statusLabel(status: String): String = when (status) {
 private fun statusTint(status: String): Color = when (status) {
     "Todo"       -> AppTheme.Ink500
     "InProgress" -> AppTheme.Brand
-    "Review"     -> AppTheme.Warning
+    "InReview"   -> AppTheme.Warning
     "Done"       -> AppTheme.Success
     else         -> AppTheme.Ink500
 }
@@ -1132,7 +1148,7 @@ private fun statusTint(status: String): Color = when (status) {
 private fun statusBg(status: String): Color = when (status) {
     "Todo"       -> AppTheme.Ink50
     "InProgress" -> AppTheme.Brand50
-    "Review"     -> AppTheme.WarningBg
+    "InReview"   -> AppTheme.WarningBg
     "Done"       -> AppTheme.SuccessBg
     else         -> AppTheme.Ink50
 }
@@ -1166,3 +1182,22 @@ private fun deriveAvatarLetters(task: TaskRecord): String {
         else            -> "?"
     }
 }
+
+/**
+ * Per-assignee initials list — one 2-letter token per assignee, in order.
+ * Used to drive [DsAvatarStack] on multi-assignee tasks. Falls back to the
+ * single legacy [deriveAvatarLetters] when the task has no array of names.
+ */
+private fun deriveAvatarLettersList(task: TaskRecord): List<String> {
+    val names = task.allAssigneeNames()
+    if (names.isEmpty()) return listOf(deriveAvatarLetters(task))
+    return names.map { full ->
+        val parts = full.trim().split(' ', '\t').filter { it.isNotBlank() }
+        when {
+            parts.size >= 2 -> "${parts[0].first()}${parts[1].first()}".uppercase()
+            parts.size == 1 -> parts[0].first().uppercase().toString()
+            else            -> "?"
+        }
+    }
+}
+

@@ -14,5 +14,14 @@ package com.example.uniwattelektrik.platform
  */
 expect class LinkLauncher() {
     fun openWhatsApp(phoneE164: String, message: String)
+
+    /**
+     * Opens the platform's preferred maps app pinned at [lat]/[lng]. The
+     * [label] is used as the pin/title where supported (Google Maps q=, Apple
+     * Maps q=). Android prefers `geo:` (Google Maps, Waze, etc. — user picks
+     * via chooser) and falls back to the Google Maps web URL. iOS prefers
+     * the `maps://` scheme (Apple Maps) and falls back to a web URL.
+     */
+    fun openMap(lat: Double, lng: Double, label: String = "")
 }
 

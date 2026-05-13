@@ -18,6 +18,19 @@ import androidx.compose.runtime.Composable
 expect fun rememberUriOpener(): (String) -> Unit
 
 /**
+ * Build a `tel:` URI suitable for [rememberUriOpener] that opens the OS
+ * phone dialer prefilled with [phone]. The dialer launches but no call is
+ * placed until the user taps the call button — keeps the integration
+ * permission-free on Android (no CALL_PHONE) and friction-free on iOS.
+ */
+fun buildTelUri(phone: String): String {
+    // Strip everything except digits, '+', '*' and '#' which are the chars
+    // RFC 3966 / E.164 allow in a telephone-subscriber URI.
+    val cleaned = phone.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }
+    return "tel:$cleaned"
+}
+
+/**
  * Build a `geo:` URI suitable for [rememberUriOpener] that opens the OS map app.
  */
 fun buildMapsUri(
@@ -37,15 +50,21 @@ fun buildMapsUri(
 
 /** Minimal, dependency-free percent-encoder for query strings. */
 private fun String.encodeForUri(): String = buildString(length) {
+    val hex = "0123456789ABCDEF"
     for (ch in this@encodeForUri) {
         if (ch.isLetterOrDigit() || ch == '-' || ch == '.' || ch == '_' || ch == '~') {
             append(ch)
         } else if (ch == ' ') {
             append('+')
         } else {
-            for (b in ch.toString().toByteArray(Charsets.UTF_8)) {
+            // `encodeToByteArray()` is in the common stdlib (UTF-8); JVM-only
+            // `String.format` / `Charsets` are unavailable in Kotlin/Native,
+            // so we hex-encode by hand to keep the helper KMP-portable.
+            for (b in ch.toString().encodeToByteArray()) {
+                val v = b.toInt() and 0xFF
                 append('%')
-                append("%02X".format(b.toInt() and 0xFF))
+                append(hex[v ushr 4])
+                append(hex[v and 0x0F])
             }
         }
     }

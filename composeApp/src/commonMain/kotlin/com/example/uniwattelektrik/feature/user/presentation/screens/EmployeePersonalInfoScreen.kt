@@ -53,7 +53,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.uniwattelektrik.core.components.PremiumHeaderBackground
+import com.example.uniwattelektrik.core.components.OperationsHeaderSurface
 import com.example.uniwattelektrik.core.components.PremiumHeaderStatusBarColor
 import com.example.uniwattelektrik.core.theme.AppTheme
 import com.example.uniwattelektrik.core.theme.SetStatusBar
@@ -104,14 +104,7 @@ fun EmployeePersonalInfoScreen(
     ) {
         // ── Gradient header ────────────────────────────────────────────────
         item {
-            PremiumHeaderBackground {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .windowInsetsPadding(WindowInsets.statusBars)
-                        .padding(horizontal = 20.dp)
-                        .padding(top = 14.dp, bottom = 32.dp),
-                ) {
+            OperationsHeaderSurface(bottomPadding = 32.dp) {
                     // Top bar
                     Row(
                         modifier          = Modifier.fillMaxWidth(),
@@ -137,8 +130,8 @@ fun EmployeePersonalInfoScreen(
                         Text(
                             "Personal Information",
                             color      = Color.White,
-                            fontSize   = 20.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontSize   = 24.sp,                    // canonical header title size
+                            fontWeight = FontWeight.ExtraBold,
                             modifier   = Modifier.weight(1f),
                         )
                     }
@@ -230,7 +223,6 @@ fun EmployeePersonalInfoScreen(
                     }
                 }
             }
-        }
 
         // ── Personal Information ───────────────────────────────────────────
         item {

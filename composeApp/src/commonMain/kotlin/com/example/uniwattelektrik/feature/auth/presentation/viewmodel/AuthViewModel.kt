@@ -15,6 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -67,7 +68,8 @@ class AuthViewModel(
         // to Verified whenever a session appears. Initial Bootstrapping → Idle
         // transition is owned by the `bootstrap` job below so we never flash
         // the Login screen while the persisted session is still being read.
-        observeSession()
+        val sessionFlow = observeSession()
+        sessionFlow
             .onEach { session ->
                 if (session != null && _state.value !is AuthUiState.Verified) {
                     _state.value = AuthUiState.Verified(session.user)
@@ -77,12 +79,21 @@ class AuthViewModel(
 
         // Restore the persisted session on cold start. Once the suspend call
         // returns, we *know* whether the user is signed in — flip out of the
-        // Bootstrapping state. If the observer above already promoted us to
-        // Verified, we leave it alone; otherwise we resolve to Idle.
+        // Bootstrapping state. We peek the current session from the StateFlow
+        // (it's backed by a StateFlow in the repository, so `.first()` is
+        // synchronous-ish and returns the current value) to avoid a race
+        // where bootstrap completes → state=Idle → observer emits Verified.
+        // That race caused a brief "Login screen flash" right after the
+        // splash on relaunch for signed-in users.
         viewModelScope.launch {
             try { bootstrap() } catch (_: Throwable) { /* fall through */ }
             if (_state.value is AuthUiState.Bootstrapping) {
-                _state.value = AuthUiState.Idle
+                val currentSession = runCatching { sessionFlow.first() }.getOrNull()
+                _state.value = if (currentSession != null) {
+                    AuthUiState.Verified(currentSession.user)
+                } else {
+                    AuthUiState.Idle
+                }
             }
         }
     }
