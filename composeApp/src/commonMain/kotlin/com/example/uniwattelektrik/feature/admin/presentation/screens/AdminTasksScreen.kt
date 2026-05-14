@@ -87,6 +87,7 @@ import com.example.uniwattelektrik.core.theme.AppTheme
 import com.example.uniwattelektrik.core.theme.AppTypography
 import com.example.uniwattelektrik.core.theme.SetStatusBar
 import com.example.uniwattelektrik.core.theme.appScreenBackground
+import com.example.uniwattelektrik.core.theme.premiumLayeredShadow
 import com.example.uniwattelektrik.feature.workforce.data.remote.TaskRecord
 import com.example.uniwattelektrik.feature.workforce.data.remote.allAssigneeNames
 import com.example.uniwattelektrik.feature.workforce.presentation.WorkforceViewModel
@@ -861,12 +862,10 @@ private fun AdminWorkflowCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(
-                elevation    = AppElevation.card,
-                shape        = AppShapes.card,
-                spotColor    = accent.copy(alpha = 0.15f),
-                ambientColor = Color.Transparent,
-            )
+            // Premium two-layer shadow shared with Leave / Employees / Stock
+            // cards — wide accent-tinted halo for the floating feel + a tight
+            // ink edge for crisp silhouette.
+            .premiumLayeredShadow(accentColor = accent, shape = AppShapes.card)
             .clip(AppShapes.card)
             .background(AppTheme.Surface)
             .clickable(onClick = onClick),

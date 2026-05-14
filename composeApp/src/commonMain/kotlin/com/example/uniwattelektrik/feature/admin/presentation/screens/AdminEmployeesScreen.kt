@@ -9,6 +9,7 @@ import com.example.uniwattelektrik.core.components.FieldLabel
 import com.example.uniwattelektrik.core.theme.AppTheme
 import com.example.uniwattelektrik.core.theme.AppShapes
 import com.example.uniwattelektrik.core.theme.appScreenBackground
+import com.example.uniwattelektrik.core.theme.premiumLayeredShadow
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -567,7 +568,14 @@ private fun EmployeeCard(e: EmployeeRecord, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 96.dp)
-            .shadow(elevation = elevation, shape = shape, spotColor = ShadowSoft)
+            // Premium soft drop shadow shared with Leave / Tasks / Stock cards.
+            // Strength scales up on press for tactile feedback.
+            .premiumLayeredShadow(
+                accentColor   = visual.color, // ignored — kept for source compat
+                shape         = shape,
+                dropElevation = elevation + 14.dp,
+                dropAlpha     = if (isPressed) 0.24f else 0.18f,
+            )
             .clip(shape)
             .background(cardColor)
             .border(

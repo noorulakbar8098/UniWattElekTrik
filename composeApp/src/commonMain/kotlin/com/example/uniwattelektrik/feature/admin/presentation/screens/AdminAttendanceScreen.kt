@@ -51,15 +51,21 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.UnfoldLess
+import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.material.icons.outlined.AccessTime
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.People
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -163,8 +169,11 @@ fun AdminAttendanceScreen(
         Instant.fromEpochMilliseconds(nowEpochMillis())
             .toLocalDateTime(tz).date
     }
+    // Quick 7-day window (Today, Yesterday, then the previous 5 days). Custom
+    // dates outside this window are supported via the calendar picker — the
+    // picked date is shown as a "Custom" chip prepended to the row.
     val dates       = remember(today) { (0..6).map { d -> today.minus(d, DateTimeUnit.DAY) } }
-    var selectedIdx by remember { mutableIntStateOf(0) }
+    var selectedDate by remember(today) { mutableStateOf(today) }
     var activeFilter by remember { mutableStateOf(AttendanceFilter.ALL) }
 
     // ── "Last updated Xs ago" counter ──────────────────────────────────────────
@@ -175,7 +184,6 @@ fun AdminAttendanceScreen(
     // source in this file. Now it lives inside the leaf Text only.
 
     // ── Date math ─────────────────────────────────────────────────────────────
-    val selectedDate    = dates[selectedIdx]
     val selectedStartMs = remember(selectedDate) { selectedDate.atStartOfDayIn(tz).toEpochMilliseconds() }
     val selectedEndMs   = selectedStartMs + 86_400_000L
     val shiftStartMs    = selectedStartMs + 9L * 3_600_000L   // 09:00 AM
@@ -291,11 +299,16 @@ fun AdminAttendanceScreen(
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coScope    = rememberCoroutineScope()
 
+    // ── Embedded map expand/collapse state ──────────────────────────────────
+    // Hoisted here (above the pager) so the toggle persists across tab swipes.
+    var mapExpanded by remember { mutableStateOf(false) }
+
     Column(modifier = modifier.fillMaxSize().background(ScreenBg)) {
 
-        // 1. Premium gradient header — sits above the tabs. The "Xs ago"
-        //    ticker is encapsulated inside the header itself so the timer
-        //    can never bubble a recomposition up to the screen.
+        // 1. Premium gradient header.
+        //
+        // The "Xs ago" ticker is encapsulated inside the header itself so the
+        // timer can never bubble a recomposition up to the screen.
         AttendancePremiumHeader(
             todayOnField  = todayOnField,
             absentCt      = absentCt,
@@ -303,18 +316,8 @@ fun AdminAttendanceScreen(
             updateResetKey = attendance.size to checkins.size,
         )
 
-        // 1b. Live map.
-        // IMPORTANT: rendered OUTSIDE the HorizontalPager.
-        //
-        // `AttendanceMap` is an AndroidView wrapping the OSM map. When an
-        // AndroidView lives inside a Pager page, Compose remeasures and
-        // potentially reattaches it as the user changes filters / dates,
-        // which trips an Android-level recursive `dispatchGetDisplayList`
-        // crash. Hoisting it here keeps a single, stable map instance.
-        Spacer(Modifier.height(14.dp))
-        AttendanceMapSection(markers = markers)
-
-        // 2. Tab row — switches between attendance overview and leave requests.
+        // 2. Tab row — moved directly under the header so the tabs are always
+        //    visible at the top of the screen.
         PrimaryTabRow(
             selectedTabIndex = pagerState.currentPage,
             containerColor   = Color.White,
@@ -336,7 +339,21 @@ fun AdminAttendanceScreen(
             }
         }
 
-        // 3. Page contents.
+        // 3. Live map.
+        // IMPORTANT: rendered OUTSIDE the HorizontalPager, with a `visible`
+        // flag driving an animated height-collapse to 0 when the user is on
+        // the Leave tab. Keeping the composable mounted prevents the OSM
+        // AndroidView from re-attaching across page swipes (which previously
+        // caused a recursive dispatchGetDisplayList crash). The Leave tab
+        // therefore gets the full vertical area for itself.
+        AttendanceMapSection(
+            markers       = markers,
+            expanded      = mapExpanded,
+            visible       = pagerState.currentPage == 0,
+            onToggleExpand = { mapExpanded = !mapExpanded },
+        )
+
+        // 4. Page contents.
         HorizontalPager(
             state    = pagerState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -350,8 +367,9 @@ fun AdminAttendanceScreen(
                     activeFilter   = activeFilter,
                     onActiveFilter = { activeFilter = it },
                     dates          = dates,
-                    selectedIdx    = selectedIdx,
-                    onSelectDate   = { selectedIdx = it },
+                    today          = today,
+                    selectedDate   = selectedDate,
+                    onSelectDate   = { selectedDate = it },
                     filteredItems  = filteredItems,
                     onEmployeeClick = onEmployeeClick,
                 )
@@ -379,9 +397,11 @@ private fun AttendanceTabContent(
     absentCt       : Int,
     activeFilter   : AttendanceFilter,
     onActiveFilter : (AttendanceFilter) -> Unit,
+    /** Quick-pick window — the latest 7 days ending at `today`. */
     dates          : List<kotlinx.datetime.LocalDate>,
-    selectedIdx    : Int,
-    onSelectDate   : (Int) -> Unit,
+    today          : kotlinx.datetime.LocalDate,
+    selectedDate   : kotlinx.datetime.LocalDate,
+    onSelectDate   : (kotlinx.datetime.LocalDate) -> Unit,
     filteredItems  : List<EmployeeAttendanceUi>,
     onEmployeeClick: (userId: String) -> Unit,
 ) {
@@ -404,9 +424,10 @@ private fun AttendanceTabContent(
             item {
                 Spacer(Modifier.height(18.dp))
                 DateSelectorRow(
-                    dates       = dates,
-                    selectedIdx = selectedIdx,
-                    onSelect    = onSelectDate,
+                    dates        = dates,
+                    today        = today,
+                    selectedDate = selectedDate,
+                    onSelect     = onSelectDate,
                 )
             }
             item {
@@ -637,9 +658,14 @@ private fun AttendanceAnalyticsRow(
 }
 
 /**
- * Premium stat card — white card with a thin coloured top strip, icon chip,
- * large count, label, animated fill-bar, and % of team label.
- * Tapping it toggles the attendance filter.
+ * Compact stat card — horizontal layout: square icon chip on the left,
+ * count + label + animated fill-bar stacked on the right. A thin coloured
+ * accent strip runs along the top edge. Tapping the card toggles its
+ * attendance filter.
+ *
+ * Designed to roughly halve the height of the previous vertical layout so
+ * three cards fit inline without dominating the screen — leaves more room
+ * for the map and the employee list below.
  */
 @Composable
 private fun AttendanceStatCard(
@@ -654,11 +680,11 @@ private fun AttendanceStatCard(
     modifier: Modifier = Modifier,
 ) {
     val elevation by animateDpAsState(
-        targetValue   = if (isSelected) 16.dp else 4.dp,
+        targetValue   = if (isSelected) 12.dp else 3.dp,
         label         = "cardElev",
     )
     val scale by animateFloatAsState(
-        targetValue   = if (isSelected) 1.04f else 1f,
+        targetValue   = if (isSelected) 1.03f else 1f,
         animationSpec = tween(200),
         label         = "cardScale",
     )
@@ -673,21 +699,21 @@ private fun AttendanceStatCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .shadow(elevation, RoundedCornerShape(20.dp), spotColor = if (isSelected) glowColor else ShadowSoft)
-                .clip(RoundedCornerShape(20.dp))
+                .shadow(elevation, RoundedCornerShape(16.dp), spotColor = if (isSelected) glowColor else ShadowSoft)
+                .clip(RoundedCornerShape(16.dp))
                 .background(CardBg)
                 .then(
                     if (isSelected)
-                        Modifier.border(1.5.dp, accentColor.copy(alpha = 0.55f), RoundedCornerShape(20.dp))
+                        Modifier.border(1.5.dp, accentColor.copy(alpha = 0.55f), RoundedCornerShape(16.dp))
                     else Modifier,
                 )
                 .clickable(onClick = onClick),
         ) {
-            // ── Coloured top accent strip ────────────────────────────────
+            // ── Thin coloured top accent strip ──────────────────────────
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(4.dp)
+                    .height(3.dp)
                     .background(
                         Brush.horizontalGradient(
                             listOf(accentColor, accentColor.copy(alpha = 0.55f)),
@@ -695,27 +721,28 @@ private fun AttendanceStatCard(
                     ),
             )
 
-            Column(
-                modifier            = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+            Row(
+                modifier              = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                verticalAlignment     = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
             ) {
-                // ── Icon chip + optional "active" dot ──────────────────
+                // ── Icon chip (left) + optional "active" dot ──────────
                 Box {
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(11.dp))
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(10.dp))
                             .background(accentColor.copy(alpha = if (isSelected) 0.18f else 0.10f)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(icon, null, tint = accentColor, modifier = Modifier.size(18.dp))
+                        Icon(icon, null, tint = accentColor, modifier = Modifier.size(16.dp))
                     }
                     if (isSelected) {
                         Box(
                             modifier = Modifier
-                                .size(10.dp)
+                                .size(8.dp)
                                 .align(Alignment.TopEnd)
-                                .offset(x = 3.dp, y = (-3).dp)
+                                .offset(x = 2.dp, y = (-2).dp)
                                 .clip(CircleShape)
                                 .background(accentColor)
                                 .border(1.5.dp, CardBg, CircleShape),
@@ -723,30 +750,45 @@ private fun AttendanceStatCard(
                     }
                 }
 
-                // ── Count ───────────────────────────────────────────────
-                Text(
-                    count.toString(),
-                    color         = if (isSelected) accentColor else InkPrimary,
-                    fontSize      = 26.sp,
-                    fontWeight    = FontWeight.ExtraBold,
-                    letterSpacing = (-0.5).sp,
-                    lineHeight    = 26.sp,
-                )
-
-                // ── Label + bar + % ─────────────────────────────────────
-                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                // ── Right column: count + % inline, label, fill bar ────
+                Column(
+                    modifier            = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Row(
+                        verticalAlignment     = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            count.toString(),
+                            color         = if (isSelected) accentColor else InkPrimary,
+                            fontSize      = 20.sp,
+                            fontWeight    = FontWeight.ExtraBold,
+                            letterSpacing = (-0.4).sp,
+                            lineHeight    = 20.sp,
+                        )
+                        Text(
+                            "${(pct * 100).toInt()}%",
+                            color      = accentColor.copy(alpha = 0.7f),
+                            fontSize   = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier   = Modifier.padding(bottom = 2.dp),
+                        )
+                    }
                     Text(
                         label,
-                        color      = InkSecondary,
-                        fontSize   = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        color         = InkSecondary,
+                        fontSize      = 10.sp,
+                        fontWeight    = FontWeight.SemiBold,
                         letterSpacing = 0.2.sp,
+                        maxLines      = 1,
+                        overflow      = TextOverflow.Ellipsis,
                     )
-                    // Animated fill bar
+                    // Animated fill bar — visual at-a-glance density.
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(4.dp)
+                            .height(3.dp)
                             .clip(RoundedCornerShape(999.dp))
                             .background(accentColor.copy(alpha = 0.12f)),
                     ) {
@@ -762,12 +804,6 @@ private fun AttendanceStatCard(
                                 ),
                         )
                     }
-                    Text(
-                        "${(pct * 100).toInt()}%",
-                        color      = accentColor.copy(alpha = 0.65f),
-                        fontSize   = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
                 }
             }
         }
@@ -776,53 +812,233 @@ private fun AttendanceStatCard(
 
 // ─── 3. Date Selector ─────────────────────────────────────────────────────────
 
+/**
+ * Professional day-card date picker.
+ *
+ * Top row     — month/year of the currently-selected date + "Pick date" button
+ *               that opens a Material3 DatePickerDialog for arbitrary dates.
+ * Bottom row  — horizontal row of vertical "day cards" (day-of-week ▸ date
+ *               number ▸ active dot). When the picked date is OUTSIDE the
+ *               quick 7-day window, a "Custom" chip is prepended so the user
+ *               can see exactly which day they're viewing.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DateSelectorRow(
     dates: List<kotlinx.datetime.LocalDate>,
-    selectedIdx: Int,
-    onSelect: (Int) -> Unit,
+    today: kotlinx.datetime.LocalDate,
+    selectedDate: kotlinx.datetime.LocalDate,
+    onSelect: (kotlinx.datetime.LocalDate) -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Icon(
-            Icons.Filled.CalendarToday,
-            contentDescription = null,
-            tint               = InkSecondary,
-            modifier           = Modifier.size(20.dp).align(Alignment.CenterVertically),
-        )
-        Spacer(Modifier.width(2.dp))
-        dates.forEachIndexed { idx, date ->
-            val label = when (idx) {
-                0 -> "Today"
-                1 -> "Yesterday"
-                else -> "${dayAbbrev(date.dayOfWeek.name)} ${date.dayOfMonth}"
-            }
-            val isSelected = idx == selectedIdx
-            Box(
-                modifier = Modifier
-                    .shadow(
-                        elevation   = if (isSelected) 8.dp else 1.dp,
-                        shape       = RoundedCornerShape(50),
-                        spotColor   = if (isSelected) Brand.copy(alpha = 0.3f) else ShadowSoft,
-                    )
-                    .clip(RoundedCornerShape(50))
-                    .background(if (isSelected) Brand else CardBg)
-                    .then(if (!isSelected) Modifier.border(1.dp, Color(0xFFE5E7EB), RoundedCornerShape(50)) else Modifier)
-                    .clickable { onSelect(idx) }
-                    .padding(horizontal = 18.dp, vertical = 10.dp),
-                contentAlignment = Alignment.Center,
-            ) {
+    var showPicker by remember { mutableStateOf(false) }
+    val tz = TimeZone.currentSystemDefault()
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // ── Top row: month/year + "Pick date" button ────────────────────
+        Row(
+            modifier              = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(
+                    Icons.Filled.CalendarToday,
+                    contentDescription = null,
+                    tint               = Brand,
+                    modifier           = Modifier.size(16.dp),
+                )
                 Text(
-                    label,
-                    color      = if (isSelected) Color.White else InkSecondary,
-                    fontSize   = 13.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    "${monthName(selectedDate.month.name)} ${selectedDate.year}",
+                    color         = InkPrimary,
+                    fontSize      = 14.sp,
+                    fontWeight    = FontWeight.Bold,
+                    letterSpacing = 0.2.sp,
                 )
             }
+            Box(
+                modifier = Modifier
+                    .shadow(2.dp, RoundedCornerShape(10.dp), spotColor = Brand.copy(alpha = 0.25f))
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Brand.copy(alpha = 0.10f))
+                    .border(1.dp, Brand.copy(alpha = 0.30f), RoundedCornerShape(10.dp))
+                    .clickable { showPicker = true }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            ) {
+                Row(
+                    verticalAlignment     = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.CalendarToday,
+                        contentDescription = null,
+                        tint               = Brand,
+                        modifier           = Modifier.size(12.dp),
+                    )
+                    Text(
+                        "Pick date",
+                        color      = Brand,
+                        fontSize   = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        // ── Day cards row (scrolls horizontally) ────────────────────────
+        LazyRow(
+            contentPadding        = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // Custom date — shown ONLY when the picked date is outside the
+            // 7-day quick window. Acts as a "you are viewing" indicator.
+            val isCustom = selectedDate !in dates
+            if (isCustom) {
+                item(key = "custom-${selectedDate}") {
+                    DayChip(
+                        topLabel    = "CUSTOM",
+                        number      = selectedDate.dayOfMonth,
+                        bottomLabel = monthName(selectedDate.month.name).take(3).uppercase(),
+                        isSelected  = true,
+                        accent      = Color(0xFF8B5CF6),
+                        onClick     = { /* already selected */ },
+                    )
+                }
+            }
+            items(dates, key = { it.toString() }) { date ->
+                val isSelected = date == selectedDate
+                val isToday    = date == today
+                val isYest     = date == today.minus(1, DateTimeUnit.DAY)
+                DayChip(
+                    topLabel = when {
+                        isToday -> "TODAY"
+                        isYest  -> "YEST"
+                        else    -> dayAbbrev(date.dayOfWeek.name).uppercase()
+                    },
+                    number   = date.dayOfMonth,
+                    bottomLabel = monthName(date.month.name).take(3).uppercase(),
+                    isSelected  = isSelected,
+                    accent      = if (isToday) Brand else Color(0xFF334155),
+                    onClick     = { onSelect(date) },
+                )
+            }
+        }
+    }
+
+    if (showPicker) {
+        val initialMs = selectedDate.atStartOfDayIn(tz).toEpochMilliseconds()
+        val pickerState = rememberDatePickerState(initialSelectedDateMillis = initialMs)
+        DatePickerDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    val ms = pickerState.selectedDateMillis
+                    if (ms != null) {
+                        val picked = Instant.fromEpochMilliseconds(ms)
+                            .toLocalDateTime(tz).date
+                        onSelect(picked)
+                    }
+                    showPicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("Cancel") }
+            },
+        ) { DatePicker(state = pickerState) }
+    }
+}
+
+/**
+ * A vertical "day card" used by [DateSelectorRow]. Renders an eyebrow label
+ * (TODAY / YEST / day-of-week abbrev), a large date number, and a tiny
+ * month abbrev underneath. The active card animates to filled-brand with a
+ * white dot indicator; inactive cards sit on a white surface with a subtle
+ * border.
+ */
+@Composable
+private fun DayChip(
+    topLabel: String,
+    number: Int,
+    bottomLabel: String,
+    isSelected: Boolean,
+    accent: Color,
+    onClick: () -> Unit,
+) {
+    val scale by animateFloatAsState(
+        targetValue   = if (isSelected) 1.04f else 1f,
+        animationSpec = tween(220),
+        label         = "dayScale",
+    )
+    val elevation by animateDpAsState(
+        targetValue = if (isSelected) 10.dp else 1.dp,
+        label       = "dayElev",
+    )
+    val bgColor by animateColorAsState(
+        targetValue = if (isSelected) accent else CardBg,
+        label       = "dayBg",
+    )
+
+    Box(
+        modifier = Modifier
+            .scale(scale)
+            .size(width = 58.dp, height = 70.dp)
+            .shadow(
+                elevation = elevation,
+                shape     = RoundedCornerShape(14.dp),
+                spotColor = if (isSelected) accent.copy(alpha = 0.35f) else ShadowSoft,
+            )
+            .clip(RoundedCornerShape(14.dp))
+            .background(bgColor)
+            .then(
+                if (!isSelected)
+                    Modifier.border(1.dp, Color(0xFFE5E7EB), RoundedCornerShape(14.dp))
+                else Modifier,
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(1.dp),
+        ) {
+            Text(
+                text          = topLabel,
+                color         = if (isSelected) Color.White.copy(alpha = 0.92f) else InkSecondary,
+                fontSize      = 9.sp,
+                fontWeight    = FontWeight.Bold,
+                letterSpacing = 0.6.sp,
+                maxLines      = 1,
+            )
+            Text(
+                text          = number.toString(),
+                color         = if (isSelected) Color.White else InkPrimary,
+                fontSize      = 20.sp,
+                fontWeight    = FontWeight.ExtraBold,
+                letterSpacing = (-0.4).sp,
+                lineHeight    = 22.sp,
+            )
+            Text(
+                text          = bottomLabel,
+                color         = if (isSelected) Color.White.copy(alpha = 0.75f) else InkSecondary.copy(alpha = 0.7f),
+                fontSize      = 8.sp,
+                fontWeight    = FontWeight.SemiBold,
+                letterSpacing = 0.4.sp,
+                maxLines      = 1,
+            )
+        }
+        // Active dot at the bottom of the selected card.
+        if (isSelected) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 4.dp)
+                    .size(4.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.85f)),
+            )
         }
     }
 }
@@ -893,15 +1109,42 @@ private fun AttendanceFilterBar(
 // ─── 5. Map Section ────────────────────────────────────────────────────────────
 
 @Composable
-private fun AttendanceMapSection(markers: List<MapMarker>) {
+private fun AttendanceMapSection(
+    markers: List<MapMarker>,
+    expanded: Boolean,
+    /** When false, the map collapses to 0 height (used on the Leave tab so it
+     *  can claim the full screen). The composable stays mounted so the
+     *  underlying AndroidView (OSM) is never re-attached during page swipes. */
+    visible: Boolean,
+    onToggleExpand: () -> Unit,
+) {
     val mapShape    = RoundedCornerShape(22.dp)
     val borderBrush = Brush.linearGradient(listOf(Brand, Color(0xFF1565C0), Color(0xFF0D1B6E)))
+
+    // Height target: collapsed → 0, otherwise compact (210dp) or expanded (430dp).
+    val mapHeight by animateDpAsState(
+        targetValue   = when {
+            !visible -> 0.dp
+            expanded -> 430.dp
+            else     -> 210.dp
+        },
+        animationSpec = tween(380, easing = FastOutSlowInEasing),
+        label         = "mapHeight",
+    )
+    // Top/bottom padding collapses too so we don't leave a visible gap when
+    // the map is hidden on the Leave tab.
+    val verticalPad by animateDpAsState(
+        targetValue   = if (visible) 12.dp else 0.dp,
+        animationSpec = tween(380, easing = FastOutSlowInEasing),
+        label         = "mapVerticalPad",
+    )
 
     Box(
         modifier = Modifier
             .padding(horizontal = 20.dp)
+            .padding(top = verticalPad)
             .fillMaxWidth()
-            .height(250.dp)
+            .height(mapHeight)
             .shadow(16.dp, mapShape, spotColor = Brand.copy(alpha = 0.2f))
             .clip(mapShape)
             .background(borderBrush)
@@ -924,10 +1167,12 @@ private fun AttendanceMapSection(markers: List<MapMarker>) {
                 }
             }
         }
-        // Map overlay label
+        // Pin-count overlay (top-LEFT). Moved off the top-right to leave that
+        // corner clean for the Streets / Satellite / Terrain style switcher
+        // rendered inside the embedded AttendanceMap.
         Box(
             modifier = Modifier
-                .align(Alignment.TopEnd)
+                .align(Alignment.TopStart)
                 .padding(10.dp)
                 .clip(RoundedCornerShape(50))
                 .background(Color(0xCC1A1A2E))
@@ -936,6 +1181,36 @@ private fun AttendanceMapSection(markers: List<MapMarker>) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Icon(Icons.Outlined.Map, null, tint = Color.White, modifier = Modifier.size(12.dp))
                 Text("${markers.size} pins", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        // Expand/collapse pill (BOTTOM-RIGHT). Toggles map height in-place
+        // between compact and expanded. Lives opposite the "View full map"
+        // pill (bottom-left, inside AttendanceMap) and out of the way of the
+        // style switcher (top-right).
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(10.dp)
+                .shadow(6.dp, RoundedCornerShape(50), spotColor = Color(0x661A1A2E))
+                .clip(RoundedCornerShape(50))
+                .background(Color(0xE61A1A2E))
+                .clickable(onClick = onToggleExpand)
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(
+                    imageVector        = if (expanded) Icons.Filled.UnfoldLess else Icons.Filled.UnfoldMore,
+                    contentDescription = if (expanded) "Collapse map" else "Expand map",
+                    tint               = Color.White,
+                    modifier           = Modifier.size(12.dp),
+                )
+                Text(
+                    text       = if (expanded) "Collapse" else "Expand",
+                    color      = Color.White,
+                    fontSize   = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                )
             }
         }
     }
@@ -1136,6 +1411,24 @@ private fun dayAbbrev(name: String) = when (name.uppercase()) {
     "MONDAY"    -> "Mon"; "TUESDAY"  -> "Tue"; "WEDNESDAY" -> "Wed"
     "THURSDAY"  -> "Thu"; "FRIDAY"   -> "Fri"; "SATURDAY"  -> "Sat"
     "SUNDAY"    -> "Sun"; else       -> name.take(3)
+}
+
+/** Short month name (e.g. "May", "December"). KMP-safe — does not rely on JVM's
+ *  `Month.getDisplayName` which is unavailable on Kotlin/Native. */
+private fun monthName(name: String): String = when (name.uppercase()) {
+    "JANUARY"   -> "January"
+    "FEBRUARY"  -> "February"
+    "MARCH"     -> "March"
+    "APRIL"     -> "April"
+    "MAY"       -> "May"
+    "JUNE"      -> "June"
+    "JULY"      -> "July"
+    "AUGUST"    -> "August"
+    "SEPTEMBER" -> "September"
+    "OCTOBER"   -> "October"
+    "NOVEMBER"  -> "November"
+    "DECEMBER"  -> "December"
+    else        -> name.lowercase().replaceFirstChar { it.uppercase() }
 }
 
 private fun initials(name: String): String =

@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.uniwattelektrik.core.theme.AppTheme
+import com.example.uniwattelektrik.core.theme.premiumLayeredShadow
 
 /**
  * Stock health levels used for color-coded status feedback in cards.
@@ -120,7 +121,15 @@ fun MinimalSpareCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(6.dp, shape, ambientColor = Color.Transparent, spotColor = AppTheme.ShadowSm)
+            // Premium two-layer shadow shared with Leave / Tasks / Employees
+            // cards. Halo picks up the stock-level colour (green ok, amber
+            // low, red out) so the card communicates urgency at a glance.
+            // When the user is in selection-mode and this card is selected,
+            // the halo flips to brand-blue to match the selection ring.
+            .premiumLayeredShadow(
+                accentColor = if (selected) AppTheme.Brand else statusColor,
+                shape       = shape,
+            )
             .clip(shape)
             .background(cardBg)
             .then(
