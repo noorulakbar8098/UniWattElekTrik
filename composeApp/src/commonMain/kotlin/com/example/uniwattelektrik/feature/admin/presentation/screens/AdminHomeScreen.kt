@@ -2,6 +2,9 @@ package com.example.uniwattelektrik.feature.admin.presentation.screens
 
 import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.EaseOutBack
 import androidx.compose.animation.core.EaseOutCubic
 import androidx.compose.animation.core.LinearEasing
@@ -42,6 +45,7 @@ import com.example.uniwattelektrik.core.components.PremiumCarousel
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Assignment
@@ -61,6 +65,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
@@ -73,6 +78,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -305,9 +311,18 @@ fun AdminHomeScreen(
         }.take(5)
     }
 
+    // PERF: Activity feed + sparkline used to key on raw `nowMs` (60s ticks)
+    // — that rebuilt the entire feed every minute even when no underlying
+    // data changed. Bucket to 5 minutes for the feed (relative-time labels
+    // need only minute-level accuracy and 5 min granularity is invisible to
+    // the user) and 1 hour for the sparkline (it draws by-day buckets so
+    // intra-hour ticks can never change its shape).
+    val nowMs5MinBucket  = nowMs / (5L * 60_000L)
+    val nowMsHourBucket  = nowMs / 3_600_000L
+
     // Real-time activity feed merged from tasks + employees + attendance + spares.
     // Re-derived whenever any source changes; capped at 25 newest items.
-    val activityItems = remember(tasks, employees, attendance, spareItems, nowMs) {
+    val activityItems = remember(tasks, employees, attendance, spareItems, nowMs5MinBucket) {
         com.example.uniwattelektrik.feature.admin.presentation.screens.components.buildActivityFeed(
             tasks      = tasks,
             employees  = employees,
@@ -325,7 +340,7 @@ fun AdminHomeScreen(
     val activityCounts = remember(activityItems) {
         activityItems.groupingBy { it.category }.eachCount()
     }
-    val sparklinePoints = remember(tasks, nowMs) { sparkline7Day(tasks, nowMs) }
+    val sparklinePoints = remember(tasks, nowMsHourBucket) { sparkline7Day(tasks, nowMs) }
 
     // Status bar tracks the new operations header surface.
     SetStatusBar(
@@ -334,9 +349,15 @@ fun AdminHomeScreen(
     )
 
     val listState = rememberLazyListState()
+    val initialLoad = !streamsReady || workforceLoading
+
+    // Outer Box — gives the loading overlay a layer that spans the FULL
+    // screen so the card is centred against the device viewport (not just
+    // the area below the header).
+    Box(modifier = modifier.fillMaxSize()) {
 
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             // Whole-screen "blue · white · dark-blue" weave — VERY light so the
             // cards still float clearly above it. 5 stops give a subtle hue
@@ -352,6 +373,12 @@ fun AdminHomeScreen(
                     ),
                 ),
             ),
+            // PERF: blur dropped entirely. RenderEffect blur over the entire
+            // scrollable scene (LazyColumn + KPI animations + sparkline chart)
+            // costs roughly half a frame budget on mid-tier devices, which
+            // was visible as both spinner stutter AND scroll judder. The dark
+            // scrim inside HomeLoadingOverlay already hides the content
+            // effectively — the blur was just decorative cost.
     ) {
         // Unified gradient header — admin name + bell + greeting all in one
         // block (same pattern as the Employees screen). Sits above the
@@ -364,13 +391,19 @@ fun AdminHomeScreen(
             onBell     = onOpenNotifications,
         )
 
-        // Show the skeleton while ANY of the dashboard's data streams is still
-        // pending its first emission (coordinated shimmer). Falls back to the
-        // legacy `workforceLoading` flag if streamsReady is true but we're
-        // mid-explicit-refresh.
-        if (!streamsReady || workforceLoading) {
-            HomeContentSkeleton(modifier = Modifier.fillMaxSize().weight(1f))
-        } else {
+        // Premium loading experience.
+        //
+        // OLD behaviour: when any data stream was pending, we replaced the
+        // home body with an inline shimmer. That made KPI cards appear to
+        // "pop in" once data arrived, but the user could still tap underneath
+        // a half-rendered surface and trigger no-op navigation.
+        //
+        // NEW behaviour: we always render the real LazyColumn underneath
+        // (with empty / placeholder values) and overlay a premium centred
+        // loading card ("Fetching your Company details…") that intercepts
+        // every click. The card fades out the instant streams are ready,
+        // revealing the real dashboard underneath without any layout shift.
+        Box(modifier = Modifier.fillMaxSize().weight(1f)) {
         AppPullToRefresh(onRefresh = { workforceVm.refresh() }) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -638,17 +671,247 @@ fun AdminHomeScreen(
         }
         }   // LazyColumn
         }   // AppPullToRefresh
-        }   // else (not loading)
-    }       // outer Column
+        }   // body Box (.weight(1f) wrapper)
+    }       // Column (header + body)
+
+        // ── Loading overlay (sibling of the Column above) ───────────────
+        // Sits in the OUTER Box so it spans the full screen — header
+        // included — and the card therefore centres on the device viewport
+        // rather than the body area below the header. Absorbs every touch
+        // so the user can't tap through to the LazyColumn underneath while
+        // streams are still arriving.
+        //
+        // PERF: Animatable + derivedStateOf instead of animateFloatAsState.
+        //
+        // The previous `val overlayAlpha by animateFloatAsState(...)` +
+        // `if (initialLoad || overlayAlpha > 0.01f)` pattern read the
+        // animating Float at COMPOSITION time in the `if` predicate, so the
+        // entire AdminHomeScreen recomposed ~60× during the 260ms fade.
+        //
+        // Animatable's `value` is a State<Float>; reading it only inside
+        // `graphicsLayer { … }` defers the read to DRAW time, so no parent
+        // recomposition. The `derivedStateOf` then converts the continuous
+        // float into a discrete boolean (mount/unmount only), so the
+        // surrounding composable recomposes exactly twice — once on fade-in,
+        // once on fade-out — instead of once per frame.
+        val overlayAnim = remember {
+            androidx.compose.animation.core.Animatable(if (initialLoad) 1f else 0f)
+        }
+        LaunchedEffect(initialLoad) {
+            overlayAnim.animateTo(
+                targetValue   = if (initialLoad) 1f else 0f,
+                animationSpec = tween(durationMillis = 260),
+            )
+        }
+        val overlayShouldRender by remember {
+            derivedStateOf { overlayAnim.value > 0.01f }
+        }
+        if (overlayShouldRender) {
+            Box(
+                modifier         = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = overlayAnim.value },
+                contentAlignment = Alignment.Center,
+            ) {
+                HomeLoadingOverlay()
+            }
+        }
+    }   // outer Box (full-screen)
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
- *  HOME CONTENT SKELETON  — shown BELOW the header while Firestore loads
- *  Matches the real home layout: status strip → KPI grid → task rows
- *  Renders a *sweeping* shimmer (left → right gradient pass) on every bone,
- *  not just a pulsing alpha — and stretches edge-to-edge so the entire
- *  area below the header is covered while we wait for streams.
+ *  HOME LOADING OVERLAY  — premium centered loading card.
+ *
+ *  Shown while Firestore streams (employees / tasks / attendance / leaves /
+ *  inventory) are still emitting their first values. Sits on top of the
+ *  blurred LazyColumn and absorbs every touch so the user can't tap a
+ *  half-loaded button — fixes the "first-few-seconds-buttons-don't-respond"
+ *  issue from the previous skeleton implementation.
+ *
+ *  Layout (centered):
+ *    ┌──────────────────────────┐
+ *    │ ⏳ LOADING               │   ← brand pill, top-left
+ *    │                          │
+ *    │           ◯              │   ← CircularProgressIndicator
+ *    │                          │
+ *    │ Fetching your Company    │   ← title (22sp, ExtraBold)
+ *    │      details…            │
+ *    │                          │
+ *    │  Pulling the latest...   │   ← subtitle, two lines
+ *    │                          │
+ *    │  ┌───────────────────┐   │   ← mini skeleton row
+ *    │  │ ▢   ━━━━━━━━━     │   │     (telegraphs "real cards
+ *    │  │     ━━━━━         │   │      are about to appear")
+ *    │  └───────────────────┘   │
+ *    └──────────────────────────┘
  * ────────────────────────────────────────────────────────────────────────── */
+@Composable
+private fun HomeLoadingOverlay() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            // Soft brand-tinted scrim — covers older devices that can't render
+            // Compose's RenderEffect blur (Android < 12). On API 31+ this
+            // stacks on top of the actual blur for a richer atmospheric feel.
+            .background(Color(0x66070D1F))
+            // ABSORB every touch so the user can't accidentally tap through.
+            .clickable(
+                indication = null,
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+            ) { /* swallow */ },
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 28.dp)
+                .fillMaxWidth()
+                // Same premium soft drop shadow used on cards across the app.
+                .shadow(
+                    elevation    = 36.dp,
+                    shape        = RoundedCornerShape(28.dp),
+                    spotColor    = AppTheme.Ink900.copy(alpha = 0.45f),
+                    ambientColor = AppTheme.Brand.copy(alpha = 0.20f),
+                )
+                .clip(RoundedCornerShape(28.dp))
+                // Subtle top-light gradient so the card has presence on the
+                // dark scrim without going clinical-white.
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.White,
+                            Color(0xFFFAFCFF),
+                            Color(0xFFF4F7FE),
+                        ),
+                    ),
+                )
+                .border(1.dp, AppTheme.Ink100.copy(alpha = 0.7f), RoundedCornerShape(28.dp))
+                .padding(horizontal = 28.dp, vertical = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            // ── "LOADING" pill (top-left, breaks the centered axis on purpose
+            //    so the card feels like a real status surface, not a modal) ──
+            Row(
+                modifier              = Modifier
+                    .align(Alignment.Start)
+                    .clip(RoundedCornerShape(50))
+                    .background(AppTheme.Brand.copy(alpha = 0.12f))
+                    .border(1.dp, AppTheme.Brand.copy(alpha = 0.25f), RoundedCornerShape(50))
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
+                verticalAlignment     = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text("⏳", fontSize = 11.sp)
+                Text(
+                    "LOADING",
+                    color         = AppTheme.Brand,
+                    fontSize      = 10.sp,
+                    fontWeight    = FontWeight.ExtraBold,
+                    letterSpacing = 1.2.sp,
+                )
+            }
+
+            Spacer(Modifier.height(28.dp))
+
+            // ── Circular progress indicator (large, brand-blue, gradient track) ──
+            // Wrapped in a Box so we can paint a subtle outer halo behind it.
+            Box(
+                modifier         = Modifier.size(84.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                // Soft brand glow behind the spinner.
+                Box(
+                    modifier = Modifier
+                        .size(84.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(
+                                    AppTheme.Brand.copy(alpha = 0.18f),
+                                    Color.Transparent,
+                                ),
+                            ),
+                        ),
+                )
+                CircularProgressIndicator(
+                    modifier    = Modifier.size(72.dp),
+                    strokeWidth = 6.dp,
+                    color       = AppTheme.Brand,
+                    trackColor  = AppTheme.Ink100,
+                )
+            }
+
+            Spacer(Modifier.height(28.dp))
+
+            // ── Title ─────────────────────────────────────────────────────
+            Text(
+                text          = "Fetching your Company details…",
+                color         = AppTheme.Ink900,
+                fontSize      = 20.sp,
+                fontWeight    = FontWeight.ExtraBold,
+                letterSpacing = (-0.3).sp,
+                textAlign     = TextAlign.Center,
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            // ── Subtitle ──────────────────────────────────────────────────
+            Text(
+                text       = "Pulling the latest from the server.\nThis usually takes 1–2 seconds.",
+                color      = AppTheme.Ink500,
+                fontSize   = 13.sp,
+                fontWeight = FontWeight.Medium,
+                lineHeight = 19.sp,
+                textAlign  = TextAlign.Center,
+            )
+
+            Spacer(Modifier.height(24.dp))
+
+            // ── Mini skeleton row — telegraphs the upcoming layout ────────
+            Row(
+                modifier              = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(AppTheme.Ink50)
+                    .padding(horizontal = 14.dp, vertical = 14.dp),
+                verticalAlignment     = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(AppTheme.Ink100),
+                )
+                Column(
+                    modifier            = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.75f)
+                            .height(9.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(AppTheme.Ink100),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.45f)
+                            .height(9.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(AppTheme.Ink100),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  HOME CONTENT SKELETON  — kept for legacy use (e.g. refresh state on
+ *  screens that still want inline shimmer). No longer used on the home
+ *  screen itself — that uses [HomeLoadingOverlay] above.
+ * ────────────────────────────────────────────────────────────────────────── */
+@Suppress("unused")
 @Composable
 private fun HomeContentSkeleton(modifier: Modifier = Modifier) {
     // Single shared pulse — every bone breathes in unison.

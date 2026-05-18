@@ -2,6 +2,7 @@ package com.example.uniwattelektrik.di
 
 import com.example.uniwattelektrik.core.notification.AdminNotificationsCoordinator
 import com.example.uniwattelektrik.core.notification.LocalNotifier
+import com.example.uniwattelektrik.core.notification.ReminderScheduler
 import com.example.uniwattelektrik.core.notification.UserNotificationsCoordinator
 import com.example.uniwattelektrik.core.performance.PerformanceMonitor
 import com.example.uniwattelektrik.feature.auth.data.remote.AdminDirectory
@@ -48,6 +49,14 @@ object AppContainer {
 
     // --- In-app notifications (free path: Firestore listeners + local push) ---
     val localNotifier: LocalNotifier by lazy { LocalNotifier() }
+
+    /**
+     * Schedules killed-state-safe local reminders via AlarmManager (Android)
+     * / no-op on iOS until UNUserNotificationCenter is wired. Survives swipe
+     * and reboot ([BootCompletedReceiver] rehydrates persisted entries).
+     */
+    val reminderScheduler: ReminderScheduler by lazy { ReminderScheduler() }
+
     val adminNotificationsCoordinator: AdminNotificationsCoordinator by lazy {
         AdminNotificationsCoordinator(workforceDirectory, localNotifier)
     }
@@ -94,6 +103,7 @@ object AppContainer {
         WorkforceViewModel(
             directory = workforceDirectory,
             employeeAuthClient = employeeAuthClient,
+            reminderScheduler = reminderScheduler,
         )
 
     fun createInventoryViewModel(): InventoryViewModel =

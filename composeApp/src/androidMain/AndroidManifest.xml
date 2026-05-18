@@ -7,11 +7,23 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Exact alarms (Android 12+) — fires local reminders even in Doze /
+         app-standby. SCHEDULE_EXACT_ALARM is a normal permission on API 31-32,
+         must be requested at runtime on API 33+. USE_EXACT_ALARM covers
+         calendar/messaging-style apps with no runtime prompt. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- Re-schedule alarms after device reboot (alarms don't survive reboot). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Brief wake lock so AlarmReceiver can build + post the notification
+         before the device drops back to Doze. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
     <application
         android:allowBackup="true"
+        android:name=".UniWattApplication"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -47,6 +59,27 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+
+        <!-- AlarmManager fires this BroadcastReceiver for each scheduled
+             local reminder. The receiver builds + posts the tray notif via
+             LocalNotifier and exits within the 10s WAKE_LOCK window. -->
+        <receiver
+            android:name=".core.notification.ReminderAlarmReceiver"
+            android:exported="false" />
+
+        <!-- After a device reboot, AlarmManager forgets every alarm. We
+             re-schedule them by reading the persisted ReminderStore. -->
+        <receiver
+            android:name=".core.notification.BootCompletedReceiver"
+            android:exported="true"
+            android:enabled="true"
+            android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"

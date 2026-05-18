@@ -79,9 +79,11 @@ kotlin {
             // GitLive Firebase exports its types — needed so iosApp.swift can
             // see them and so linker can resolve Firebase symbols correctly.
             export(libs.gitlive.firebase.auth)
+            export(libs.gitlive.firebase.firestore)
             // Link against the Firebase Apple SDK that the iosApp Xcode project
-            // ships in via Swift Package Manager (FirebaseAuth product).
+            // ships in via Swift Package Manager (FirebaseAuth + FirebaseFirestore).
             linkerOpts("-framework", "FirebaseAuth")
+            linkerOpts("-framework", "FirebaseFirestore")
         }
     }
     
@@ -97,6 +99,7 @@ kotlin {
             implementation(libs.kotlinx.coroutines.playServices)
             implementation(libs.play.services.location)
             implementation(libs.osmdroid.android)
+            implementation(libs.androidx.work.runtime)
             // Lightweight xlsx reader (~3 MB, no MethodHandle — works on minSdk 24).
             implementation("org.dhatim:fastexcel-reader:0.18.4")
             // Android does NOT ship javax.xml.stream (StAX API) — bundle it so
@@ -104,10 +107,12 @@ kotlin {
             implementation("stax:stax-api:1.0.1")
         }
         iosMain.dependencies {
-            // Real Firebase Auth on iOS via the GitLive KMP wrapper. Requires
-            // the iosApp Xcode project to add the Firebase Apple SDK (SPM)
+            // Real Firebase Auth + Firestore on iOS via the GitLive KMP
+            // wrapper. Requires the iosApp Xcode project to add the Firebase
+            // Apple SDK (SPM) with FirebaseAuth + FirebaseFirestore products
             // and call FirebaseApp.configure() on launch.
             api(libs.gitlive.firebase.auth)
+            api(libs.gitlive.firebase.firestore)
         }
         commonMain.dependencies {
             implementation(libs.compose.runtime)

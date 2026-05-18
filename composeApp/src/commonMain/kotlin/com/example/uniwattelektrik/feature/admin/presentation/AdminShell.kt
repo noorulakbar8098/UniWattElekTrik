@@ -14,9 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Assignment
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.LocationOn
-import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -160,13 +158,14 @@ fun AdminShell(
         }
     }
 
+    // Bottom nav is intentionally trimmed to 4 tabs to keep the bar uncluttered.
+    // "Team" (employees) and "Stock" (inventory) live as dedicated rows inside
+    // the Settings/More screen and are reachable from the Operations cards too.
     val tabs = remember {
         listOf(
             BottomNavItem(key = "home",       label = "Home",   icon = Icons.Outlined.Home),
-            BottomNavItem(key = "employees",  label = "Team",   icon = Icons.Outlined.People),
             BottomNavItem(key = "tasks",      label = "Tasks",  icon = Icons.AutoMirrored.Outlined.Assignment),
             BottomNavItem(key = "attendance", label = "Attend", icon = Icons.Outlined.LocationOn),
-            BottomNavItem(key = "inventory",  label = "Stock",  icon = Icons.Outlined.Inventory2),
             BottomNavItem(key = "more",       label = "More",   icon = Icons.Outlined.Settings),
         )
     }

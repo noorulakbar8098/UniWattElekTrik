@@ -14,6 +14,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.example.uniwattelektrik.core.notification.DeepLinkBus
+import com.example.uniwattelektrik.core.notification.PushSyncWorker
 import com.example.uniwattelektrik.di.AppContainer
 import com.example.uniwattelektrik.push.PushTokenRegistrar
 import kotlinx.coroutines.flow.distinctUntilChangedBy
@@ -108,6 +109,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             App()
         }
+
+        // ── Background safety-net ──────────────────────────────────────────
+        // Periodic WorkManager job that keeps the FCM token fresh on OEM
+        // ROMs that silently sever the FCM socket after a swipe-away.
+        // Idempotent (KEEP policy) — safe to call on every launch.
+        PushSyncWorker.enqueue(applicationContext)
 
         // Handle deep-link from a "cold-start" notification tap.
         publishDeepLinkFromIntent(intent)

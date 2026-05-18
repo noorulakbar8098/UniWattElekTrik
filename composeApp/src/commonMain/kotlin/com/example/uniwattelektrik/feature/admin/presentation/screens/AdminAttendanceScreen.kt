@@ -4,6 +4,7 @@ import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
 import com.example.uniwattelektrik.core.theme.AppTheme
 import com.example.uniwattelektrik.core.theme.appScreenBackground
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -53,6 +54,8 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.UnfoldLess
 import androidx.compose.material.icons.filled.UnfoldMore
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.AccessTime
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.People
@@ -831,10 +834,14 @@ private fun DateSelectorRow(
     onSelect: (kotlinx.datetime.LocalDate) -> Unit,
 ) {
     var showPicker by remember { mutableStateOf(false) }
+    // Day-chips strip is collapsible to free vertical space — the top
+    // row (month/year + Pick date) always stays visible so the user can
+    // still see which date they're viewing and jump to any other date.
+    var expanded by remember { mutableStateOf(false) }
     val tz = TimeZone.currentSystemDefault()
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        // ── Top row: month/year + "Pick date" button ────────────────────
+        // ── Top row: month/year + collapse toggle + "Pick date" button ──
         Row(
             modifier              = Modifier
                 .fillMaxWidth()
@@ -842,7 +849,14 @@ private fun DateSelectorRow(
             verticalAlignment     = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { expanded = !expanded }
+                    .padding(vertical = 4.dp, horizontal = 4.dp),
+            ) {
                 Icon(
                     Icons.Filled.CalendarToday,
                     contentDescription = null,
@@ -856,15 +870,31 @@ private fun DateSelectorRow(
                     fontWeight    = FontWeight.Bold,
                     letterSpacing = 0.2.sp,
                 )
+                // Day eyebrow when collapsed — gives quick context without
+                // having to expand the strip.
+                if (!expanded) {
+                    Text(
+                        "· ${selectedDate.dayOfMonth} ${monthName(selectedDate.month.name).take(3)}",
+                        color    = InkSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Icon(
+                    imageVector        = if (expanded) Icons.Filled.KeyboardArrowUp
+                                         else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = if (expanded) "Collapse dates" else "Expand dates",
+                    tint               = InkSecondary,
+                    modifier           = Modifier.size(18.dp),
+                )
             }
             Box(
                 modifier = Modifier
                     .shadow(2.dp, RoundedCornerShape(10.dp), spotColor = Brand.copy(alpha = 0.25f))
                     .clip(RoundedCornerShape(10.dp))
-                    .background(Brand.copy(alpha = 0.10f))
-                    .border(1.dp, Brand.copy(alpha = 0.30f), RoundedCornerShape(10.dp))
+                    .background(Brand)
                     .clickable { showPicker = true }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
             ) {
                 Row(
                     verticalAlignment     = Alignment.CenterVertically,
@@ -873,12 +903,12 @@ private fun DateSelectorRow(
                     Icon(
                         Icons.Filled.CalendarToday,
                         contentDescription = null,
-                        tint               = Brand,
+                        tint               = Color.White,
                         modifier           = Modifier.size(12.dp),
                     )
                     Text(
                         "Pick date",
-                        color      = Brand,
+                        color      = Color.White,
                         fontSize   = 11.sp,
                         fontWeight = FontWeight.Bold,
                     )
@@ -888,42 +918,44 @@ private fun DateSelectorRow(
 
         Spacer(Modifier.height(10.dp))
 
-        // ── Day cards row (scrolls horizontally) ────────────────────────
-        LazyRow(
-            contentPadding        = PaddingValues(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            // Custom date — shown ONLY when the picked date is outside the
-            // 7-day quick window. Acts as a "you are viewing" indicator.
-            val isCustom = selectedDate !in dates
-            if (isCustom) {
-                item(key = "custom-${selectedDate}") {
+        // ── Day cards row (scrolls horizontally) — collapsible ──────────
+        AnimatedVisibility(visible = expanded) {
+            LazyRow(
+                contentPadding        = PaddingValues(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // Custom date — shown ONLY when the picked date is outside the
+                // 7-day quick window. Acts as a "you are viewing" indicator.
+                val isCustom = selectedDate !in dates
+                if (isCustom) {
+                    item(key = "custom-${selectedDate}") {
+                        DayChip(
+                            topLabel    = "CUSTOM",
+                            number      = selectedDate.dayOfMonth,
+                            bottomLabel = monthName(selectedDate.month.name).take(3).uppercase(),
+                            isSelected  = true,
+                            accent      = Color(0xFF8B5CF6),
+                            onClick     = { /* already selected */ },
+                        )
+                    }
+                }
+                items(dates, key = { it.toString() }) { date ->
+                    val isSelected = date == selectedDate
+                    val isToday    = date == today
+                    val isYest     = date == today.minus(1, DateTimeUnit.DAY)
                     DayChip(
-                        topLabel    = "CUSTOM",
-                        number      = selectedDate.dayOfMonth,
-                        bottomLabel = monthName(selectedDate.month.name).take(3).uppercase(),
-                        isSelected  = true,
-                        accent      = Color(0xFF8B5CF6),
-                        onClick     = { /* already selected */ },
+                        topLabel = when {
+                            isToday -> "TODAY"
+                            isYest  -> "YEST"
+                            else    -> dayAbbrev(date.dayOfWeek.name).uppercase()
+                        },
+                        number   = date.dayOfMonth,
+                        bottomLabel = monthName(date.month.name).take(3).uppercase(),
+                        isSelected  = isSelected,
+                        accent      = if (isToday) Brand else Color(0xFF334155),
+                        onClick     = { onSelect(date) },
                     )
                 }
-            }
-            items(dates, key = { it.toString() }) { date ->
-                val isSelected = date == selectedDate
-                val isToday    = date == today
-                val isYest     = date == today.minus(1, DateTimeUnit.DAY)
-                DayChip(
-                    topLabel = when {
-                        isToday -> "TODAY"
-                        isYest  -> "YEST"
-                        else    -> dayAbbrev(date.dayOfWeek.name).uppercase()
-                    },
-                    number   = date.dayOfMonth,
-                    bottomLabel = monthName(date.month.name).take(3).uppercase(),
-                    isSelected  = isSelected,
-                    accent      = if (isToday) Brand else Color(0xFF334155),
-                    onClick     = { onSelect(date) },
-                )
             }
         }
     }

@@ -1,9 +1,13 @@
 package com.example.uniwattelektrik.feature.user.presentation.screens
 
 import com.example.uniwattelektrik.core.performance.TrackScreenPerformance
+import com.example.uniwattelektrik.di.AppContainer
+import com.example.uniwattelektrik.platform.nowEpochMillis
 
 import com.example.uniwattelektrik.core.theme.appScreenBackground
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -312,6 +316,7 @@ fun ProfileScreen(
                     // Identity block: avatar + name/role/email with strong hierarchy.
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(contentAlignment = Alignment.BottomEnd) {
+                            @OptIn(ExperimentalFoundationApi::class)
                             Box(
                                 modifier = Modifier
                                     .size(68.dp)
@@ -321,7 +326,21 @@ fun ProfileScreen(
                                             listOf(Color(0xFFFFB28A), Color(0xFFEC8552)),
                                         ),
                                     )
-                                    .border(2.dp, Color.White.copy(alpha = 0.2f), CircleShape),
+                                    .border(2.dp, Color.White.copy(alpha = 0.2f), CircleShape)
+                                    // Hidden long-press to verify killed-state local
+                                    // notifications. Fires +30s; swipe the app away
+                                    // immediately after and watch the tray.
+                                    .combinedClickable(
+                                        onClick = {},
+                                        onLongClick = {
+                                            AppContainer.reminderScheduler.schedule(
+                                                id              = "debug-test",
+                                                triggerAtMillis = nowEpochMillis() + 30_000L,
+                                                title           = "Killed-state test",
+                                                body            = "AlarmManager works ✅ — swipe the app away now.",
+                                            )
+                                        },
+                                    ),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
@@ -790,6 +809,25 @@ fun ProfileScreen(
                             // "Personal Information" row removed for admin —
                             // admins manage their own record via the team list
                             // / Link Manager, not through this settings tab.
+                            // Team Management — moved out of the bottom nav so the
+                            // navigation bar stays focused on day-to-day tabs.
+                            SettingsRow(
+                                icon  = Icons.Outlined.People,
+                                label = "Team Management",
+                                tint  = AppTheme.Brand,
+                                onClick = { onNavigate(AdminRoute.Employees) },
+                            )
+                            HairlineDivider()
+                            // Inventory / Stock — also lifted out of the bottom
+                            // nav into Settings; quick stock counts still live on
+                            // the Operations cards above.
+                            SettingsRow(
+                                icon  = Icons.Outlined.Inventory2,
+                                label = "Inventory & Stock",
+                                tint  = AppTheme.Brand,
+                                onClick = { onNavigate(AdminRoute.Inventory) },
+                            )
+                            HairlineDivider()
                             SettingsRow(
                                 icon = Icons.Outlined.Shield,
                                 label = "Security & PIN",

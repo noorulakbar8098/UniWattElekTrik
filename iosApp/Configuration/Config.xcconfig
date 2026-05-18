@@ -5,3 +5,10 @@ PRODUCT_BUNDLE_IDENTIFIER=com.example.uniwattelektrik.UniWattElekTrik$(TEAM_ID)
 
 CURRENT_PROJECT_VERSION=1
 MARKETING_VERSION=1.0
+
+// --- Local dev: no signing needed for the iOS Simulator ---
+// These keys are scoped to the simulator SDK only, so a real-device
+// build will still require a proper team + signing identity.
+CODE_SIGNING_ALLOWED[sdk=iphonesimulator*] = NO
+CODE_SIGN_IDENTITY[sdk=iphonesimulator*]   =
+CODE_SIGNING_REQUIRED[sdk=iphonesimulator*] = NO

@@ -37,15 +37,45 @@ async function send(tokens, title, body, data = {}) {
   const list = (tokens || []).filter(Boolean);
   if (!list.length) return;
 
+  // DATA-ONLY payload (no top-level `notification` block).
+  //
+  // Why: when the Android app is in background OR killed, a payload with a
+  // `notification` block is rendered directly by the system. That path
+  // skips our FirebaseMessagingService and — on some OEM ROMs — drops the
+  // `data` extras on tap, breaking deep-linking. By going data-only the
+  // service is ALWAYS woken (foreground / background / killed), we build
+  // the notification ourselves with a proper PendingIntent, and the user
+  // lands on the right screen every time.
+  //
+  // The merged `data` carries title + body so the client can render them
+  // exactly as if they had come from a `notification` block.
+  const merged = Object.fromEntries(
+    Object.entries({ ...data, title, body }).map(([k, v]) => [k, String(v)])
+  );
+
   const res = await admin.messaging().sendEachForMulticast({
     tokens: list,
-    notification: { title, body },
-    data: Object.fromEntries(
-      Object.entries(data).map(([k, v]) => [k, String(v)])
-    ),
+    data: merged,
     android: {
+      // High priority is what wakes the service in Doze / killed state.
+      // Normal priority gets batched and may arrive minutes / hours late.
       priority: "high",
-      notification: { channelId: "uw_default" },
+      ttl: 24 * 60 * 60 * 1000,   // 24h — drop if device offline longer
+    },
+    apns: {
+      headers: {
+        "apns-priority": "10",     // immediate delivery
+        "apns-push-type": "alert",
+      },
+      payload: {
+        aps: {
+          // iOS treats data-only as silent unless we set alert + sound.
+          alert: { title, body },
+          sound: "default",
+          "mutable-content": 1,
+          "content-available": 1,
+        },
+      },
     },
   });
 

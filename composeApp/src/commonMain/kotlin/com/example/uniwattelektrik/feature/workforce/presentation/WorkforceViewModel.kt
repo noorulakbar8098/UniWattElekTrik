@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.uniwattelektrik.core.AppLog
 import com.example.uniwattelektrik.core.Resource
+import com.example.uniwattelektrik.core.notification.ReminderScheduler
 import com.example.uniwattelektrik.feature.auth.data.remote.EmployeeAuthClient
 import com.example.uniwattelektrik.feature.workforce.data.remote.AttendanceRecord
 import com.example.uniwattelektrik.feature.workforce.data.remote.CheckinPing
@@ -23,6 +24,11 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atTime
+import kotlinx.datetime.toInstant
+import kotlinx.datetime.toLocalDateTime
 
 /**
  * Drives admin & user dashboards with **real-time Firestore data** scoped by
@@ -38,6 +44,7 @@ import kotlinx.coroutines.launch
 class WorkforceViewModel(
     private val directory: WorkforceDirectory,
     private val employeeAuthClient: EmployeeAuthClient,
+    private val reminderScheduler: ReminderScheduler = ReminderScheduler(),
 ) : ViewModel() {
 
     /** Keeps the last admin/user UID so resume-triggered refreshes can re-subscribe. */
@@ -548,6 +555,7 @@ class WorkforceViewModel(
                     assigneeIds, assigneeNames,
                 )
             }
+            result.onSuccess { scheduleTaskReminder(it) }
             result.onFailure { setError(it.message) }
             _actionInProgress.value = false
             onDone(result.map { })
@@ -597,6 +605,11 @@ class WorkforceViewModel(
                     dueDate, assigneeName, notifyAssignee,
                     assigneeIds, assigneeNames,
                 )
+            }
+            result.onSuccess {
+                // Re-schedule the local reminder for the new dueDate (cancel + re-add).
+                reminderScheduler.cancel(reminderIdForTask(taskId))
+                scheduleTaskReminder(it)
             }
             result.onFailure { setError(it.message) }
             _actionInProgress.value = false
@@ -689,6 +702,11 @@ class WorkforceViewModel(
     fun changeTaskStatus(taskId: String, adminUid: String, userId: String?, newStatus: String) {
         viewModelScope.launch {
             runCatching { directory.updateTaskStatus(adminUid, taskId, userId, newStatus) }
+                .onSuccess {
+                    if (newStatus.equals("Done", ignoreCase = true)) {
+                        reminderScheduler.cancel(reminderIdForTask(taskId))
+                    }
+                }
                 .onFailure {
                     AppLog.w("WorkforceVM", "changeTaskStatus failed: ${it.message}")
                     setError(it.message)
@@ -700,6 +718,7 @@ class WorkforceViewModel(
     fun completeTask(adminUid: String, taskId: String, assignedUserId: String?) {
         viewModelScope.launch {
             runCatching { directory.updateTaskStatus(adminUid, taskId, assignedUserId, "Done") }
+                .onSuccess { reminderScheduler.cancel(reminderIdForTask(taskId)) }
                 .onFailure {
                     AppLog.w("WorkforceVM", "completeTask failed: ${it.message}")
                     setError(it.message)
@@ -729,6 +748,7 @@ class WorkforceViewModel(
                 )
             }
             result.onFailure { AppLog.w("WorkforceVM", "completeTaskWithSignoff failed: ${it.message}") }
+            result.onSuccess { reminderScheduler.cancel(reminderIdForTask(taskId)) }
             _actionInProgress.value = false
             onDone(result)
         }
@@ -891,6 +911,12 @@ class WorkforceViewModel(
         viewModelScope.launch {
             _actionInProgress.value = true
             val r = runCatching { directory.updateLeaveStatus(leaveId, adminId, userId, "approved") }
+                .onSuccess {
+                    // Schedule a local reminder for 08:00 on the leave's start day,
+                    // so the approver (admin) gets a heads-up even when the app is killed.
+                    _leaveRequests.value.firstOrNull { it.id == leaveId }
+                        ?.let { scheduleLeaveStartReminder(it) }
+                }
                 .onFailure {
                     AppLog.w("WorkforceVM", "approveLeave failed: ${it.message}")
                     setError(it.message)
@@ -911,6 +937,9 @@ class WorkforceViewModel(
             _actionInProgress.value = true
             val r = runCatching {
                 directory.updateLeaveStatus(leaveId, adminId, userId, "rejected", rejectionReason)
+            }.onSuccess {
+                // Defensive cleanup — drop any reminder previously scheduled for this leave.
+                reminderScheduler.cancel(reminderIdForLeave(leaveId))
             }.onFailure {
                 AppLog.w("WorkforceVM", "rejectLeave failed: ${it.message}")
                 setError(it.message)
@@ -918,6 +947,54 @@ class WorkforceViewModel(
             _actionInProgress.value = false
             onDone(r)
         }
+    }
+
+    // ─── Local reminder helpers (AlarmManager-backed on Android, no-op on iOS) ──
+    //
+    // These deliberately mirror the entity ids so we get idempotent
+    // schedule/cancel semantics — re-scheduling the same task replaces the
+    // previous alarm instead of stacking. See `ReminderScheduler.android.kt`.
+
+    private fun reminderIdForTask(id: String)  = "task:$id"
+    private fun reminderIdForLeave(id: String) = "leave:$id"
+
+    /**
+     * Schedule a "task due in 15 min" local notification. Safe to call with
+     * any task — early-returns if there's no due date, if the task is already
+     * Done, or if the 15-min window has already elapsed.
+     */
+    private fun scheduleTaskReminder(t: TaskRecord) {
+        val due = t.dueDate ?: return
+        if (t.status.equals("Done", ignoreCase = true)) return
+        val triggerAt = due - 15L * 60_000L
+        if (triggerAt <= com.example.uniwattelektrik.platform.nowEpochMillis()) return
+        reminderScheduler.schedule(
+            id              = reminderIdForTask(t.id),
+            triggerAtMillis = triggerAt,
+            title           = "Task due soon",
+            body            = "\"${t.title}\" is due in 15 minutes",
+            routeKey        = "tasks",
+            taskId          = t.id,
+        )
+    }
+
+    /**
+     * Schedule a reminder at 08:00 local time on the leave's start day so the
+     * admin gets a tray notification even if the app is swiped away.
+     */
+    private fun scheduleLeaveStartReminder(l: LeaveRecord) {
+        val tz = TimeZone.currentSystemDefault()
+        val startDate = Instant.fromEpochMilliseconds(l.fromDateMs)
+            .toLocalDateTime(tz).date
+        val triggerAt = startDate.atTime(8, 0).toInstant(tz).toEpochMilliseconds()
+        if (triggerAt <= com.example.uniwattelektrik.platform.nowEpochMillis()) return
+        reminderScheduler.schedule(
+            id              = reminderIdForLeave(l.id),
+            triggerAtMillis = triggerAt,
+            title           = "Leave starts today",
+            body            = "${l.employeeName}'s ${l.leaveType.ifBlank { "leave" }} begins today.",
+            routeKey        = "leave",
+        )
     }
 
 
